@@ -1,0 +1,17 @@
+morning_signal.sqlite3
+morning_signal.sqlite3.*
+*.sqlite3
+*.sqlite3-*
+*.sqlite3.*
+*.sqlite
+*.sqlite-*
+*.db
+*.dump
+*.backup
+*.bak
+.env
+.env.*
+!.env.example
+.vercel/
+__pycache__/
+*.py[cod]

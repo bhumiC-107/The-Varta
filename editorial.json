@@ -1,0 +1,25 @@
+{
+  "topic_rules": {
+    "Technology": ["software", "computer", "chip", "ai", "artificial intelligence", "cyber", "internet", "robot", "data", "tech", "open source", "startup"],
+    "Business": ["market", "econom", "finance", "stock", "bank", "trade", "inflation", "company", "business", "budget", "interest rate"],
+    "Climate": ["climate", "emission", "renewable", "warming", "carbon", "weather", "flood", "drought"],
+    "Health": ["health", "disease", "hospital", "vaccine", "medical", "public health"],
+    "Science": ["science", "research", "nasa", "discovery", "study", "scientist", "biology", "astronomy", "space mission", "spacecraft", "space station", "space telescope", "satellite", "rocket", "planet", "species", "coral", "reef", "biodiversity", "ecosystem"],
+    "India": ["india", "indian", "delhi", "mumbai", "modi", "rupee", "parliament"]
+  },
+  "region_rules": {
+    "India": ["india", "indian", "delhi", "mumbai", "bengaluru", "bangalore", "kolkata", "chennai", "modi", "rupee"],
+    "Asia": ["china", "chinese", "japan", "japanese", "taiwan", "taiwanese", "south korea", "north korea", "korean", "indonesia", "indonesian", "philippines", "pakistan", "pakistani", "bangladesh", "sri lanka", "nepal", "thailand", "vietnam"],
+    "Europe": ["europe", "european", "france", "french", "germany", "german", "uk", "britain", "british", "england", "macron", "italy", "italian", "spain", "spanish", "poland", "ukraine", "russia", "russian"],
+    "Africa": ["africa", "african", "kenya", "nigeria", "sudan", "ethiopia", "ghana", "somalia", "congo", "south africa"],
+    "Middle East": ["middle east", "iran", "iranian", "israel", "israeli", "palestine", "palestinian", "gaza", "saudi", "yemen", "yemeni", "syria", "syrian", "iraq", "iraqi", "lebanon", "jordan", "uae", "emirates"],
+    "Americas": ["united states", "american", "u.s.", "us government", "washington", "trump", "canada", "canadian", "brazil", "brazilian", "mexico", "mexican", "argentina", "chile", "peru", "colombia", "venezuela"]
+  },
+  "excluded_terms": {
+    "Celebrity": ["celebrity", "celebrities", "actor", "actors", "actress", "actresses", "star couple"],
+    "Influencer": ["influencer", "influencers", "social media star", "social media stars", "content creator"],
+    "Entertainment gossip": ["gossip", "gossipy", "reality tv", "reality show", "box office", "fashion week"],
+    "K-pop": ["k-pop", "kpop", "idol group", "idol groups"]
+  },
+  "public_interest_exceptions": ["humanitarian", "human rights", "civil rights", "war crime", "genocide", "massacre", "refugee", "disaster response", "public inquiry", "election", "parliament", "memorial", "historical significance"]
+}
