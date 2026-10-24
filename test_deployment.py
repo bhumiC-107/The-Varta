@@ -74,6 +74,33 @@ class VercelHandlerTests(unittest.TestCase):
         action.do_POST()
         self.assertEqual(action.response[0], 404)
 
+    def test_discovered_local_handler_uses_stateless_vercel_branch(self):
+        def instance(method, path, body=b"{}"):
+            value = object.__new__(server.Handler)
+            value.command, value.path = method, path
+            value.headers = Message()
+            value.headers["Host"] = "the-varta.vercel.app"
+            value.headers["Content-Type"] = "application/json"
+            value.headers["Content-Length"] = str(len(body))
+            value.rfile = io.BytesIO(body)
+            value.response = None
+            value.send_json = lambda payload, status=200: setattr(value, "response", (status, payload))
+            return value
+        with patch.dict("os.environ", {"VERCEL": "1"}):
+            page = instance("GET", "/api/index?__ms_route=/api/session")
+            page.do_GET()
+            self.assertEqual(page.response, (200, {"private": False, "stateless": True}))
+            briefing = instance("GET", "/api/index?__ms_route=/api/briefing")
+            with patch.object(server, "connect", side_effect=AssertionError("hosted GET must not open SQLite")):
+                briefing.do_GET()
+            self.assertEqual(briefing.response[0], 200)
+            self.assertEqual(briefing.response[1]["stories"], [])
+            refresh = instance("POST", "/api/index?__ms_route=/api/refresh")
+            fixture = {"stories": [{"title": "fixture"}]}
+            with patch.object(server, "stateless_briefing", return_value=fixture), patch.object(server, "connect", side_effect=AssertionError("hosted refresh must not open SQLite")):
+                refresh.do_POST()
+            self.assertEqual(refresh.response, (200, fixture))
+
 
 if __name__ == "__main__":
     unittest.main()

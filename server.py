@@ -19,7 +19,7 @@ import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse, urlsplit
+from urllib.parse import parse_qs, urlparse, urlsplit
 from urllib.request import HTTPRedirectHandler, build_opener
 
 ROOT = Path(__file__).parent
@@ -973,7 +973,20 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
         self.send_header("Cache-Control", "no-store")
         super().end_headers()
+    def _normalise_vercel_path(self):
+        if not os.environ.get("VERCEL"):
+            return
+        parsed = urlsplit(self.path)
+        route = parse_qs(parsed.query, keep_blank_values=True).get("__ms_route", [None])[0]
+        if route is None and parsed.path == "/api/index":
+            route = "/"
+        if route is not None:
+            self.path = route if route.startswith("/") and not route.startswith("//") and "\\" not in route else "/__invalid_route__"
     def _local_request(self):
+        # Some Vercel configurations dispatch the root rewrite through this
+        # module's discovered handler. Its hosted branch below is stateless.
+        if os.environ.get("VERCEL"):
+            return True
         host = (self.headers.get("Host") or "").lower()
         if host not in {"127.0.0.1", "127.0.0.1:8765", "localhost", "localhost:8765"}:
             self.send_json({"error":"This service accepts requests only through its local address"}, 403)
@@ -992,21 +1005,34 @@ class Handler(BaseHTTPRequestHandler):
         body = json.dumps(value).encode("utf-8")
         self.send_response(status); self.send_header("Content-Type", "application/json; charset=utf-8"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
     def do_GET(self):
+        self._normalise_vercel_path()
         if not self._local_request(): return
         path = urlparse(self.path).path
         if path == "/api/session":
-            return self.send_json({"private": False})
+            return self.send_json({"private": False, "stateless": True} if os.environ.get("VERCEL") else {"private": False})
         if path == "/api/briefing":
+            if os.environ.get("VERCEL"):
+                return self.send_json({"stories": [], "hiddenStories": [], "unverifiedStories": [],
+                    "selection": {"freshness_hours": 48, "fresh_count": 0, "stale_count": 0, "undated_count": 0,
+                                  "requested": 10, "empty_reason": "Refresh feeds to collect today's stories.",
+                                  "empty_next_steps": ["Select Refresh feeds to check the configured publishers"]},
+                    "deepRead": None, "focus": FOCUS[dt.date.today().weekday()],
+                    "settings": {"regions": [], "topics": [], "sources": [], "excluded": [], "length": 10,
+                                 "difficulty": "Standard", "daily_goal": 1, "freshness_hours": 48},
+                    "reading": {"goal": 1, "read_today": 0, "deep_read_completed": False, "history": [], "saved": []},
+                    "coverage": {"checked_today": 0, "failed_today": 0, "story_count": 0, "regions": [], "publishers": []},
+                    "sources": [{**s, "status": None} for s in public_sources(get_sources())]})
             return self.send_json(api_data())
         if path == "/api/config":
             sources = public_sources(get_sources())
-            return self.send_json({"sources": sources, "categories": CATEGORIES, "focus": FOCUS[dt.date.today().weekday()]})
+            return self.send_json({"sources": sources, "categories": CATEGORIES, "focus": FOCUS[dt.date.today().weekday()], "stateless": bool(os.environ.get("VERCEL"))})
         name = STATIC_FILES.get(path)
         file = ROOT / name if name else None
         if not file or not file.is_file():
             self.send_error(404); return
         data = file.read_bytes(); self.send_response(200); self.send_header("Content-Type", {".html":"text/html; charset=utf-8", ".css":"text/css; charset=utf-8", ".js":"text/javascript; charset=utf-8"}[file.suffix]); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
     def do_POST(self):
+        self._normalise_vercel_path()
         if not self._local_request(): return
         if self.headers.get_content_type() != "application/json": return self.send_json({"error":"Content-Type must be application/json"}, 415)
         try:
@@ -1018,6 +1044,13 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(data, dict): raise ValueError()
         except Exception: return self.send_json({"error":"Expected a JSON object with valid input"}, 400)
         path = urlparse(self.path).path
+        if os.environ.get("VERCEL"):
+            if path != "/api/refresh":
+                return self.send_json({"error": "This public reader does not store preferences or reading activity."}, 404)
+            try:
+                return self.send_json(stateless_briefing())
+            except Exception:
+                return self.send_json({"error": "Feed refresh could not complete. Please try again."}, 503)
         if path == "/api/refresh":
             if data: return self.send_json({"error":"Unexpected refresh input"}, 400)
             try: return self.send_json(refresh())
