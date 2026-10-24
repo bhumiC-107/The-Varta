@@ -46,6 +46,7 @@ class VercelHandlerTests(unittest.TestCase):
         handler.send_response = lambda status: setattr(handler, "status", status)
         handler.send_header = lambda *_args: None
         handler.end_headers = lambda: None
+        handler.wfile = io.BytesIO()
         return handler
 
     def test_public_session_and_refresh_does_not_require_credentials(self):
@@ -60,8 +61,10 @@ class VercelHandlerTests(unittest.TestCase):
 
     def test_direct_function_preview_url_falls_back_to_site_root(self):
         handler = self.make_handler("GET", "/api/index")
-        handler._normalise_route()
-        self.assertEqual(handler.path, "/")
+        handler.do_GET()
+        self.assertEqual(handler.status, 200)
+        self.assertIn(b"Morning Signal", handler.wfile.getvalue())
+        self.assertFalse(issubclass(vercel_api.handler, server.Handler))
 
     def test_refresh_rejects_unexpected_input_and_stateful_actions(self):
         bad_body = self.make_handler("POST", "/api/refresh", b'{"notes":"no"}')
