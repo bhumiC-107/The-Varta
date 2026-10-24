@@ -6,7 +6,7 @@
   "functions": {
     "api/index.py": {
       "maxDuration": 60,
-      "excludeFiles": "{morning_signal.sqlite3*,**/*.sqlite3,**/*.sqlite,**/*.db,**/*.dump,**/*.backup,**/*.bak,test_*.py,offline_evaluation.py,import_sqlite_to_neon.py}"
+      "excludeFiles": "{morning_signal.sqlite3*,**/*.sqlite3,**/*.sqlite,**/*.db,**/*.dump,**/*.backup,**/*.bak,test_*.py,offline_evaluation.py,import_sqlite_to_mysql.py}"
     }
   }
 }

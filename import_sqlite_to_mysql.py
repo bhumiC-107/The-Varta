@@ -1,4 +1,4 @@
-"""Explicit one-time, idempotent import of local Morning Signal data to Neon."""
+"""Explicit one-time, idempotent import of local Morning Signal data to MySQL."""
 import argparse
 from contextlib import contextmanager
 import hashlib
@@ -10,15 +10,15 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 import server
-from database_config import is_neon_database_url
+from database_config import is_mysql_database_url
 
 TABLES = {
-    "stories": ("id", ("id", "title", "url", "summary", "published", "category", "region", "created", "fetched_at", "read", "saved", "hidden", "read_at", "note", "reading_minutes", "feedback")),
-    "story_sources": (("story_id", "source_id"), ("story_id", "source_id", "source_name", "url", "last_seen", "publisher_group", "title")),
-    "source_status": ("source_id", ("source_id", "checked", "error")),
-    "settings": ("key", ("key", "value")),
-    "reading_history": (("story_id", "completed_on"), ("story_id", "completed_on", "theme", "completed_at")),
-    "app_meta": ("key", ("key", "value")),
+    "stories": ("id", "title", "url", "summary", "published", "category", "region", "created", "fetched_at", "read", "saved", "hidden", "read_at", "note", "reading_minutes", "feedback"),
+    "story_sources": ("story_id", "source_id", "source_name", "url", "last_seen", "publisher_group", "title"),
+    "source_status": ("source_id", "checked", "error"),
+    "settings": ("key", "value"),
+    "reading_history": ("story_id", "completed_on", "theme", "completed_at"),
+    "app_meta": ("key", "value"),
 }
 
 
@@ -27,13 +27,13 @@ class ImportErrorSafe(ValueError):
 
 
 def validate_target(url, expected_host, expected_database):
-    if not is_neon_database_url(url):
-        raise ImportErrorSafe("DATABASE_URL must be an SSL Neon Postgres URL")
+    if not is_mysql_database_url(url):
+        raise ImportErrorSafe("DATABASE_URL must be a verified-TLS MySQL URL")
     parsed = urlsplit(url)
     host = (parsed.hostname or "").lower()
     database = unquote(parsed.path.lstrip("/").split("/", 1)[0])
     if not expected_host or host != expected_host.lower().strip():
-        raise ImportErrorSafe("Neon host does not match --expected-host")
+        raise ImportErrorSafe("MySQL host does not match --expected-host")
     if not expected_database or database != expected_database:
         raise ImportErrorSafe("Database name does not match --expected-database")
 
@@ -62,7 +62,7 @@ def open_source(path):
 def read_source(source):
     tables = {row[0] for row in source.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     result = {}
-    for table, (_, columns) in TABLES.items():
+    for table, columns in TABLES.items():
         if table not in tables:
             result[table] = []
             continue
@@ -113,7 +113,7 @@ def _target_ready_for_import(db):
     if marker:
         return marker[0]
     if any(counts.values()):
-        raise ImportErrorSafe("Neon target already contains user data; choose a fresh database or an already-imported source")
+        raise ImportErrorSafe("MySQL target already contains user data; choose a fresh MySQL database or an already-imported source")
     expected_defaults = {
         "regions": ["India", "Asia", "Europe", "Africa", "Americas", "Middle East", "Global"],
         "topics": ["Technology", "Science", "Business", "World", "India"],
@@ -124,7 +124,7 @@ def _target_ready_for_import(db):
     stored_settings = {row["key"]: json.loads(row["value"]) for row in db.execute("SELECT key,value FROM settings")}
     if any(key not in expected_defaults or value != expected_defaults[key]
            for key, value in stored_settings.items()):
-        raise ImportErrorSafe("Neon target has customized settings; choose a fresh database before importing")
+        raise ImportErrorSafe("MySQL target has customized settings; choose a fresh MySQL database before importing")
     return None
 
 
@@ -134,28 +134,25 @@ def import_data(data, db):
     if current:
         if current == fingerprint:
             return {table: len(rows) for table, rows in data.items()}, False
-        raise ImportErrorSafe("Neon target was imported from a different SQLite snapshot")
-    for table, (keys, columns) in TABLES.items():
+        raise ImportErrorSafe("MySQL target was imported from a different SQLite snapshot")
+    for table, columns in TABLES.items():
         if not data[table]:
             continue
-        key_columns = (keys,) if isinstance(keys, str) else keys
-        updates = [column for column in columns if column not in key_columns]
         placeholders = ",".join("?" for _ in columns)
         names = ",".join(columns)
-        update_sql = ",".join(f"{column}=EXCLUDED.{column}" for column in updates)
-        sql = f"INSERT INTO {table} ({names}) VALUES ({placeholders}) ON CONFLICT ({','.join(key_columns)}) DO UPDATE SET {update_sql}" if updates else f"INSERT INTO {table} ({names}) VALUES ({placeholders}) ON CONFLICT ({','.join(key_columns)}) DO NOTHING"
+        sql = f"INSERT OR REPLACE INTO {table} ({names}) VALUES ({placeholders})"
         for row in data[table]:
             db.execute(sql, tuple(row.get(column) for column in columns))
-    db.execute("INSERT INTO app_meta(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",
+    db.execute("INSERT OR REPLACE INTO app_meta(key,value) VALUES (?,?)",
                ("sqlite_import_fingerprint_v1", fingerprint))
     return {table: len(rows) for table, rows in data.items()}, True
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Copy a local SQLite database to a fresh Neon Postgres database")
+    parser = argparse.ArgumentParser(description="Copy a local SQLite database to a fresh MySQL-compatible database")
     parser.add_argument("--source", default=str(server.DB), help="Local SQLite file; read-only")
-    parser.add_argument("--confirm", action="store_true", help="Confirm writing this source snapshot into Neon")
-    parser.add_argument("--expected-host", help="Exact Neon endpoint hostname to protect against a wrong target")
+    parser.add_argument("--confirm", action="store_true", help="Confirm writing this source snapshot into MySQL")
+    parser.add_argument("--expected-host", help="Exact database endpoint hostname to protect against a wrong target")
     parser.add_argument("--expected-database", help="Exact database name to protect against a wrong target")
     args = parser.parse_args(argv)
     try:

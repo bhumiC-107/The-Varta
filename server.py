@@ -1,4 +1,4 @@
-"""Morning Signal: single-user local RSS briefing server (Python standard library only)."""
+"""Morning Signal: local RSS briefing server with optional MySQL deployment support."""
 from __future__ import annotations
 
 import datetime as dt
@@ -30,8 +30,6 @@ PORT = 8765
 MAX_FEED_BYTES = 1_000_000
 MAX_POST_BYTES = 32_768
 _refresh_lock = threading.Lock()
-_schema_init_lock = threading.Lock()
-_pg_schema_ready = False
 STATIC_FILES = {"/": "index.html", "/index.html": "index.html", "/styles.css": "styles.css", "/app.js": "app.js", "/README.md": "README.md"}
 
 
@@ -50,46 +48,57 @@ STOP = set("about after again also amid an and are as at be been before being be
 
 
 class CompatibleRow(dict):
-    """Postgres row with sqlite3.Row-compatible name and integer indexing."""
+    """Remote SQL row with sqlite3.Row-compatible name and integer indexing."""
     def __getitem__(self, key):
         if isinstance(key, int):
             key = tuple(self.keys())[key]
         return super().__getitem__(key)
 
 
-def postgres_row_factory(cursor):
-    return lambda values: CompatibleRow({column.name: value for column, value in zip(cursor.description, values)})
-
-
-def postgres_sql(statement):
-    """Translate the small SQLite SQL subset used by the local app."""
+def mysql_sql(statement):
+    """Translate the app's small SQLite SQL subset to MySQL-compatible SQL."""
     statement = statement.strip().rstrip(";")
     match = re.match(r"INSERT\s+OR\s+(IGNORE|REPLACE)\s+INTO\s+(\w+)(?=\s|\()\s*", statement, re.I)
     if match:
-        mode, table = match.group(1).upper(), match.group(2).lower()
-        statement = "INSERT INTO " + match.group(2) + " " + statement[match.end():]
-        if mode == "IGNORE":
-            statement += " ON CONFLICT DO NOTHING"
-        else:
-            conflict = {"settings":("key", "value"), "source_status":("source_id", "checked=EXCLUDED.checked,error=EXCLUDED.error")}.get(table)
-            if not conflict:
-                raise ValueError("Unsupported replace operation for Postgres")
-            if table == "settings":
-                statement += " ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value"
-            else:
-                statement += " ON CONFLICT (source_id) DO UPDATE SET checked=EXCLUDED.checked,error=EXCLUDED.error"
+        mode, table = match.group(1).upper(), match.group(2)
+        prefix = "INSERT IGNORE INTO" if mode == "IGNORE" else "REPLACE INTO"
+        statement = prefix + " " + table + " " + statement[match.end():]
+    statement = re.sub(r"\b(WHERE|AND)\s+key(?=\s*(?:=|<>|<|>|\bLIKE\b|\bIN\b|\bIS\b))", r"\1 `key`", statement, flags=re.I)
+    statement = re.sub(r"(?<=\.)key\b", "`key`", statement, flags=re.I)
+    statement = re.sub(r"\bSELECT\s+key(?=\s*,)", "SELECT `key`", statement, flags=re.I)
+    statement = re.sub(r"\(\s*key\s*,", "(`key`,", statement, flags=re.I)
+    statement = re.sub(r"(?<![\w`])read(?![\w`])", "`read`", statement, flags=re.I)
     return statement.replace("?", "%s")
 
 
-class PostgresConnection:
+class MySQLCursor:
+    def __init__(self, cursor):
+        self.cursor = cursor
+
+    def __getattr__(self, name):
+        return getattr(self.cursor, name)
+
+    @staticmethod
+    def _row(row):
+        return CompatibleRow(row) if isinstance(row, dict) else row
+
+    def fetchone(self):
+        return self._row(self.cursor.fetchone())
+
+    def fetchall(self):
+        return [self._row(row) for row in self.cursor.fetchall()]
+
+
+class MySQLConnection:
     def __init__(self, connection):
         self.connection = connection
-        self.dialect = "postgres"
+        self.dialect = "mysql"
 
     def execute(self, statement, parameters=()):
-        cursor = self.connection.cursor(row_factory=postgres_row_factory)
-        cursor.execute(postgres_sql(statement), parameters)
-        return cursor
+        import pymysql.cursors
+        cursor = self.connection.cursor(pymysql.cursors.DictCursor)
+        cursor.execute(mysql_sql(statement), parameters)
+        return MySQLCursor(cursor)
 
     def executescript(self, script):
         for statement in script.split(";"):
@@ -98,7 +107,7 @@ class PostgresConnection:
 
     def columns(self, table):
         return [row[0] for row in self.execute(
-            "SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=? ORDER BY ordinal_position",
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",
             (table,)).fetchall()]
 
 
@@ -108,13 +117,22 @@ def connect():
     if database_url:
         if not os.environ.get("VERCEL") and os.environ.get("MORNING_SIGNAL_ALLOW_REMOTE_DATABASE") != "1":
             raise RuntimeError("Remote databases are disabled locally; set MORNING_SIGNAL_ALLOW_REMOTE_DATABASE=1 only for a dedicated development database")
+        from urllib.parse import unquote, urlsplit
+        from database_config import is_mysql_database_url
+        if not is_mysql_database_url(database_url):
+            raise RuntimeError("DATABASE_URL must be a verified-TLS MySQL URL")
         try:
-            import psycopg
+            import pymysql
         except ImportError as ex:
-            raise RuntimeError("Postgres support requires installing requirements.txt") from ex
-        con = psycopg.connect(database_url, connect_timeout=5, application_name="morning-signal")
+            raise RuntimeError("MySQL support requires installing requirements.txt") from ex
+        parsed = urlsplit(database_url)
+        con = pymysql.connect(
+            host=parsed.hostname, port=parsed.port, user=unquote(parsed.username),
+            password=unquote(parsed.password), database=unquote(parsed.path.lstrip("/")),
+            connect_timeout=5, read_timeout=10, write_timeout=10, charset="utf8mb4",
+            autocommit=False, ssl_verify_cert=True, ssl_verify_identity=True)
         try:
-            yield PostgresConnection(con)
+            yield MySQLConnection(con)
             con.commit()
         except Exception:
             con.rollback()
@@ -136,11 +154,22 @@ def connect():
 
 def init_db():
     with connect() as db:
-        postgres = getattr(db, "dialect", "sqlite") == "postgres"
-        if postgres:
-            # Transaction-scoped lock serializes first-deploy/cold-start schema setup.
-            db.execute("SELECT pg_advisory_xact_lock(?)", (731_904_286_512,))
-        db.executescript("""
+        mysql = getattr(db, "dialect", "sqlite") == "mysql"
+        if mysql:
+            lock = db.execute("SELECT GET_LOCK(?, 10)", ("morning-signal-schema-init",)).fetchone()
+            if not lock or lock[0] != 1:
+                raise RuntimeError("Could not acquire the schema initialization lock")
+        if mysql:
+            schema = """
+                CREATE TABLE IF NOT EXISTS stories(id VARCHAR(64) PRIMARY KEY,title TEXT NOT NULL,url VARCHAR(768) NOT NULL,summary TEXT NOT NULL,published VARCHAR(40),category VARCHAR(64) NOT NULL,region VARCHAR(64) NOT NULL,created VARCHAR(40) NOT NULL,fetched_at VARCHAR(40),`read` TINYINT DEFAULT 0,saved TINYINT DEFAULT 0,hidden TINYINT DEFAULT 0,read_at VARCHAR(40),note VARCHAR(280),reading_minutes INT,feedback VARCHAR(16),UNIQUE KEY stories_url_unique(url));
+                CREATE TABLE IF NOT EXISTS story_sources(story_id VARCHAR(64),source_id VARCHAR(128),source_name VARCHAR(191),url VARCHAR(768),last_seen VARCHAR(40),publisher_group VARCHAR(128),title TEXT,PRIMARY KEY(story_id,source_id));
+                CREATE TABLE IF NOT EXISTS source_status(source_id VARCHAR(128) PRIMARY KEY,checked VARCHAR(40),error TEXT);
+                CREATE TABLE IF NOT EXISTS reading_history(story_id VARCHAR(64) NOT NULL,completed_on CHAR(10) NOT NULL,theme VARCHAR(128) NOT NULL,completed_at VARCHAR(40) NOT NULL,PRIMARY KEY(story_id,completed_on));
+                CREATE TABLE IF NOT EXISTS settings(`key` VARCHAR(191) PRIMARY KEY,value TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS app_meta(`key` VARCHAR(191) PRIMARY KEY,value TEXT NOT NULL);
+            """
+        else:
+            schema = """
         CREATE TABLE IF NOT EXISTS stories(
           id TEXT PRIMARY KEY, title TEXT NOT NULL, url TEXT NOT NULL UNIQUE, summary TEXT NOT NULL,
           published TEXT, category TEXT NOT NULL, region TEXT NOT NULL, created TEXT NOT NULL,
@@ -152,18 +181,19 @@ def init_db():
         CREATE TABLE IF NOT EXISTS reading_history(story_id TEXT NOT NULL, completed_on TEXT NOT NULL, theme TEXT NOT NULL, completed_at TEXT NOT NULL, PRIMARY KEY(story_id, completed_on));
         CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS app_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-        """)
-        source_columns = set(db.columns("story_sources")) if postgres else {row[1] for row in db.execute("PRAGMA table_info(story_sources)")}
+            """
+        db.executescript(schema)
+        source_columns = set(db.columns("story_sources")) if mysql else {row[1] for row in db.execute("PRAGMA table_info(story_sources)")}
         if "url" not in source_columns:
             db.execute("ALTER TABLE story_sources ADD COLUMN url TEXT")
         if "last_seen" not in source_columns:
             db.execute("ALTER TABLE story_sources ADD COLUMN last_seen TEXT")
-        story_columns = set(db.columns("stories")) if postgres else {row[1] for row in db.execute("PRAGMA table_info(stories)")}
+        story_columns = set(db.columns("stories")) if mysql else {row[1] for row in db.execute("PRAGMA table_info(stories)")}
         for column, declaration in (("read_at", "TEXT"), ("note", "TEXT"), ("reading_minutes", "INTEGER"), ("fetched_at", "TEXT"), ("feedback", "TEXT")):
             if column not in story_columns:
                 db.execute(f"ALTER TABLE stories ADD COLUMN {column} {declaration}")
         db.execute("UPDATE stories SET fetched_at=created WHERE fetched_at IS NULL")
-        source_columns = set(db.columns("story_sources")) if postgres else {row[1] for row in db.execute("PRAGMA table_info(story_sources)")}
+        source_columns = set(db.columns("story_sources")) if mysql else {row[1] for row in db.execute("PRAGMA table_info(story_sources)")}
         for column in ("publisher_group", "title"):
             if column not in source_columns:
                 db.execute(f"ALTER TABLE story_sources ADD COLUMN {column} TEXT")
@@ -187,7 +217,7 @@ def init_db():
                 matching = next((a for a in associations if publisher_hosts.get(a["source_id"]) == story_host), None)
                 if matching:
                     db.execute("UPDATE story_sources SET url=? WHERE story_id=? AND source_id=?", (story["url"], story["id"], matching["source_id"]))
-            db.execute("INSERT INTO app_meta VALUES ('source_urls_migration_v2','done') ON CONFLICT(key) DO NOTHING")
+            db.execute("INSERT OR IGNORE INTO app_meta VALUES ('source_urls_migration_v2','done')")
         defaults = {
           "regions": ["India", "Asia", "Europe", "Africa", "Americas", "Middle East", "Global"],
           "topics": ["Technology", "Science", "Business", "World", "India"],
@@ -196,7 +226,7 @@ def init_db():
           "freshness_hours": 48,
         }
         for k, v in defaults.items():
-            db.execute("INSERT INTO settings VALUES (?,?) ON CONFLICT(key) DO NOTHING", (k, json.dumps(v)))
+            db.execute("INSERT OR IGNORE INTO settings VALUES (?,?)", (k, json.dumps(v)))
         legacy_difficulty = db.execute("SELECT value FROM settings WHERE key='difficulty'").fetchone()
         if legacy_difficulty:
             old_value = json.loads(legacy_difficulty[0])
@@ -205,6 +235,8 @@ def init_db():
                 migrated = "Standard"
             if migrated != old_value:
                 db.execute("UPDATE settings SET value=? WHERE key='difficulty'", (json.dumps(migrated),))
+        if mysql:
+            db.execute("SELECT RELEASE_LOCK(?)", ("morning-signal-schema-init",))
 
 
 def get_sources():
@@ -697,7 +729,7 @@ def _refresh():
                               (sid, item["title"], item["url"], item["summary"], item["published"], category, region, now, now, item.get("reading_minutes")))
                             stats["new"] += 1
                     source_link_exists = db.execute("SELECT 1 FROM story_sources WHERE story_id=? AND source_id=?", (sid, source["id"])).fetchone()
-                    db.execute("INSERT INTO story_sources(story_id,source_id,source_name,url,last_seen,publisher_group,title) VALUES (?,?,?,?,?,?,?) ON CONFLICT(story_id,source_id) DO UPDATE SET source_name=excluded.source_name,url=excluded.url,last_seen=excluded.last_seen,publisher_group=excluded.publisher_group,title=excluded.title", (sid, source["id"], source["name"], item["url"], now, source.get("publisher_group", source["id"]), item["title"]))
+                    db.execute("INSERT OR REPLACE INTO story_sources(story_id,source_id,source_name,url,last_seen,publisher_group,title) VALUES (?,?,?,?,?,?,?)", (sid, source["id"], source["name"], item["url"], now, source.get("publisher_group", source["id"]), item["title"]))
                     if not existing and candidate and not source_link_exists:
                         stats["grouped"] += 1
             except Exception as ex:

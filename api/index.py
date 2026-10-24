@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import private_auth
 import server as app
-from database_config import is_neon_database_url
+from database_config import is_mysql_database_url
 
 _schema_lock = threading.Lock()
 _schema_ready = False
@@ -20,8 +20,8 @@ def _ensure_schema():
         return
     with _schema_lock:
         if not _schema_ready:
-            if not is_neon_database_url(os.environ.get("DATABASE_URL")):
-                raise RuntimeError("Neon database is not configured")
+            if not is_mysql_database_url(os.environ.get("DATABASE_URL")):
+                raise RuntimeError("MySQL database is not configured")
             app.init_db()
             _schema_ready = True
 

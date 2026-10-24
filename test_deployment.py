@@ -1,6 +1,8 @@
 """Security and deployment tests use temporary databases and fixture credentials."""
 import json
 import os
+import sys
+import types
 import sqlite3
 import tempfile
 import unittest
@@ -12,7 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import api.index as vercel_api
-import import_sqlite_to_neon as importer
+import import_sqlite_to_mysql as importer
 import private_auth
 import server
 
@@ -55,40 +57,47 @@ class PrivateAuthTests(unittest.TestCase):
             private_auth.configuration({**self.env, "APP_ORIGIN": "http://news.example.test"})
 
 
-class PostgresAdapterTests(unittest.TestCase):
+class MySQLAdapterTests(unittest.TestCase):
     def test_sqlite_sql_subset_translation(self):
-        self.assertEqual(server.postgres_sql("INSERT OR IGNORE INTO stories(id) VALUES (?)"),
-                         "INSERT INTO stories (id) VALUES (%s) ON CONFLICT DO NOTHING")
-        self.assertEqual(server.postgres_sql("INSERT OR REPLACE INTO settings VALUES (?,?)"),
-                         "INSERT INTO settings VALUES (%s,%s) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value")
-        self.assertEqual(server.postgres_sql("SELECT * FROM stories WHERE id=?"),
+        self.assertEqual(server.mysql_sql("INSERT OR IGNORE INTO stories(id) VALUES (?)"),
+                         "INSERT IGNORE INTO stories (id) VALUES (%s)")
+        self.assertEqual(server.mysql_sql("INSERT OR REPLACE INTO settings VALUES (?,?)"),
+                         "REPLACE INTO settings VALUES (%s,%s)")
+        self.assertEqual(server.mysql_sql("SELECT * FROM stories WHERE id=?"),
                          "SELECT * FROM stories WHERE id=%s")
-        with self.assertRaises(ValueError):
-            server.postgres_sql("INSERT OR REPLACE INTO stories VALUES (?)")
+        self.assertEqual(server.mysql_sql("SELECT key,read FROM settings JOIN stories ON stories.id=settings.key"),
+                         "SELECT `key`,`read` FROM settings JOIN stories ON stories.id=settings.`key`")
 
-    def test_postgres_connection_uses_translated_statements_and_named_rows(self):
-        class Column:
-            name = "story_id"
+    def test_mysql_url_requires_verified_tls_and_credentials(self):
+        from database_config import is_mysql_database_url
+        url = "mysql+pymysql://reader:placeholder@db.example.test:4000/morning?ssl_verify_cert=true&ssl_verify_identity=true"
+        self.assertTrue(is_mysql_database_url(url))
+        self.assertFalse(is_mysql_database_url("mysql://reader:placeholder@db.example.test:4000/morning"))
+        self.assertFalse(is_mysql_database_url(url.replace("mysql+pymysql://", "postgresql://")))
+
+    def test_mysql_connection_uses_translated_statements_and_named_rows(self):
+        fake_cursors = types.SimpleNamespace(DictCursor=object)
+        fake_pymysql = types.ModuleType("pymysql")
+        fake_pymysql.cursors = fake_cursors
         class Cursor:
-            description = [Column()]
             def execute(self, statement, parameters):
                 self.statement, self.parameters = statement, parameters
             def fetchone(self):
-                return self.row_factory(self)(("fixture-story",))
+                return {"story_id": "fixture-story"}
         class Connection:
-            def cursor(self, row_factory=None):
+            def cursor(self, *_args):
                 self.cursor_value = Cursor()
-                self.cursor_value.row_factory = row_factory
                 return self.cursor_value
         connection = Connection()
-        db = server.PostgresConnection(connection)
-        row = db.execute("SELECT story_id FROM stories WHERE id=?", ("fixture",)).fetchone()
+        with patch.dict(sys.modules, {"pymysql": fake_pymysql, "pymysql.cursors": fake_cursors}):
+            db = server.MySQLConnection(connection)
+            row = db.execute("SELECT story_id FROM stories WHERE id=?", ("fixture",)).fetchone()
         self.assertEqual(connection.cursor_value.statement, "SELECT story_id FROM stories WHERE id=%s")
         self.assertEqual(row["story_id"], "fixture-story")
         self.assertEqual(row[0], "fixture-story")
 
     def test_remote_database_is_disabled_in_local_app_without_explicit_opt_in(self):
-        fixture_url = "postgresql://" + "fixture" + ":" + "placeholder" + "@ep.example.neon.tech/db?sslmode=require"
+        fixture_url = "mysql+pymysql://fixture:placeholder@db.example.test:4000/db?ssl_verify_cert=true&ssl_verify_identity=true"
         with patch.dict(os.environ, {"DATABASE_URL": fixture_url}, clear=True):
             with self.assertRaisesRegex(RuntimeError, "Remote databases are disabled locally"):
                 with server.connect():
@@ -151,11 +160,12 @@ class ImporterTests(unittest.TestCase):
                 with self.assertRaisesRegex(importer.ImportErrorSafe, "customized settings"):
                     importer.import_data(data, db)
 
-    def test_target_validation_requires_explicit_matching_neon_endpoint(self):
-        url = "postgresql://" + "fixture" + ":" + "placeholder" + "@ep-test-123.neon.tech/morning?sslmode=require"
-        importer.validate_target(url, "ep-test-123.neon.tech", "morning")
-        for args in ((url, "other.neon.tech", "morning"), (url, "ep-test-123.neon.tech", "other"),
-                     ("postgresql://" + "fixture" + ":" + "placeholder" + "@localhost/morning?sslmode=require", "localhost", "morning")):
+    def test_target_validation_requires_explicit_matching_mysql_endpoint(self):
+        url = "mysql+pymysql://fixture:placeholder@mysql-test.example.test:4000/morning?ssl_verify_cert=true&ssl_verify_identity=true"
+        importer.validate_target(url, "mysql-test.example.test", "morning")
+        for args in ((url, "other.mysql.example.test", "morning"), (url, "mysql-test.example.test", "other"),
+                     ("mysql://fixture:placeholder@localhost:4000/morning", "localhost", "morning"),
+                     ("mysql://fixture:placeholder@mysql-test.example.test:4000/morning", "mysql-test.example.test", "morning")):
             with self.assertRaises(importer.ImportErrorSafe):
                 importer.validate_target(*args)
 
@@ -188,15 +198,15 @@ class VercelPrivateRouteTests(unittest.TestCase):
             "MORNING_SIGNAL_USERNAME": "owner",
             "MORNING_SIGNAL_PASSWORD": "fixture-password-long-enough-123",
             "MORNING_SIGNAL_SESSION_SECRET": "k" * 48,
-            "DATABASE_URL": "postgresql://" + "fixture" + ":" + "placeholder" + "@ep-fixture.neon.tech/morning?sslmode=require",
+            "DATABASE_URL": "mysql+pymysql://fixture:placeholder@mysql.example.test:4000/morning?ssl_verify_cert=true&ssl_verify_identity=true",
         }, clear=True)
         cls.env.start()
-        cls.pg_patch = patch.object(vercel_api, "is_neon_database_url", return_value=True)
-        cls.pg_patch.start()
+        cls.mysql_patch = patch.object(vercel_api, "is_mysql_database_url", return_value=True)
+        cls.mysql_patch.start()
 
     @classmethod
     def tearDownClass(cls):
-        cls.pg_patch.stop()
+        cls.mysql_patch.stop()
         cls.env.stop()
         vercel_api._schema_ready = False
 

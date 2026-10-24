@@ -14,6 +14,6 @@ morning_signal.sqlite3*
 test_server.py
 test_deployment.py
 offline_evaluation.py
-import_sqlite_to_neon.py
+import_sqlite_to_mysql.py
 __pycache__
 *.py[cod]
