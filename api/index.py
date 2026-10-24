@@ -15,6 +15,10 @@ class handler(app.Handler):
     def _normalise_route(self):
         parsed = urlsplit(self.path)
         route = parse_qs(parsed.query, keep_blank_values=True).get("__ms_route", [None])[0]
+        # Vercel's project success preview can request the function URL directly,
+        # without the rewrite query. Treat that entry URL as the site root.
+        if route is None and parsed.path == "/api/index":
+            route = "/"
         if route is not None:
             if not route.startswith("/") or route.startswith("//") or "\\" in route:
                 route = "/__invalid_route__"

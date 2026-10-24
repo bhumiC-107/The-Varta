@@ -58,6 +58,11 @@ class VercelHandlerTests(unittest.TestCase):
             refresh.do_POST()
         self.assertEqual(refresh.response, (200, expected))
 
+    def test_direct_function_preview_url_falls_back_to_site_root(self):
+        handler = self.make_handler("GET", "/api/index")
+        handler._normalise_route()
+        self.assertEqual(handler.path, "/")
+
     def test_refresh_rejects_unexpected_input_and_stateful_actions(self):
         bad_body = self.make_handler("POST", "/api/refresh", b'{"notes":"no"}')
         bad_body.do_POST()
