@@ -188,6 +188,7 @@ function render() {
   renderHiddenStories();
   renderReading();
   drawCoverage();
+  drawQuickExplainers();
   const filtered = category==='All' ? s : s.filter(x=>x.category===category);
   $('#story-list').innerHTML = filtered.map(articleCard).join('');
   if (s.length && !filtered.length) $('#story-list').innerHTML = `<div class="empty" style="grid-column:1/-1"><strong>No ${esc(category)} stories in this briefing.</strong><p>Try another category or refresh the enabled feeds for newer coverage.</p></div>`;
@@ -217,14 +218,22 @@ function drawCoverage() {
   const coverage=data.coverage||{checked_today:0,failed_today:0,story_count:0,regions:[],publishers:[]};
   const panel=$('#coverage-indicator');
   if(!coverage.checked_today){
-    panel.innerHTML='<p>No source checks are recorded for today. Refresh feeds to calculate which publishers and regions contribute to this briefing.</p><p class="coverage-note">This is a record of selected-story sources, not a claim of global balance.</p>';
+    panel.innerHTML='<p>No source checks are recorded for today. Refresh feeds to calculate which publishers and regions contribute to this briefing.</p><p class="coverage-note">This is a record of selected-story sources, not a claim of global balance.</p><p class="india-lens-availability">The India lens appears on qualifying stories from other regions when there is enough feed context. It is context, not a prediction.</p>';
     return;
   }
   const publishers=(coverage.publishers||[]).map(p=>`<span class="coverage-chip">${esc(p.name)}</span>`).join('');
   const regions=(coverage.regions||[]).map(region=>`<span class="coverage-chip region-chip">${esc(region)}</span>`).join('');
   const limited=(coverage.publishers||[]).length<3||(coverage.regions||[]).length<3;
   const status=coverage.story_count?`${coverage.story_count} selected ${coverage.story_count===1?'story':'stories'} came from ${coverage.publishers.length} independent ${coverage.publishers.length===1?'publisher':'publishers'} across ${coverage.regions.length} classified ${coverage.regions.length===1?'region':'regions'}.`:'No selected story has a source that both succeeded and supplied it today.';
-  panel.innerHTML=`<p>${esc(status)}${coverage.failed_today?` ${esc(coverage.failed_today)} feed ${coverage.failed_today===1?'failed':'feeds failed'} today and ${coverage.failed_today===1?'is':'are'} not counted.`:''}</p><div class="coverage-groups"><div><b>Publishers</b><div class="coverage-chips">${publishers||'<span class="coverage-muted">None yet</span>'}</div></div><div><b>Regions</b><div class="coverage-chips">${regions||'<span class="coverage-muted">None yet</span>'}</div></div></div><p class="coverage-note">${limited?'Coverage is limited today. ':' '}These regions describe selected stories from successful feeds; they do not guarantee a globally balanced briefing.</p>`;
+  const hasNonIndia=(coverage.regions||[]).some(region=>region!=='India');
+  const lensNote=hasNonIndia?'For qualifying stories from other regions, expand “India lens” on the story card. Set Reading context to Standard or More context if it is hidden.':'No non-India stories qualified in this briefing, so there is no cross-region India lens to show. This avoids inventing an India-specific impact.';
+  panel.innerHTML=`<p>${esc(status)}${coverage.failed_today?` ${esc(coverage.failed_today)} feed ${coverage.failed_today===1?'failed':'feeds failed'} today and ${coverage.failed_today===1?'is':'are'} not counted.`:''}</p><div class="coverage-groups"><div><b>Publishers</b><div class="coverage-chips">${publishers||'<span class="coverage-muted">None yet</span>'}</div></div><div><b>Regions</b><div class="coverage-chips">${regions||'<span class="coverage-muted">None yet</span>'}</div></div></div><p class="coverage-note">${limited?'Coverage is limited today. ':' '}These regions describe selected stories from successful feeds; they do not guarantee a globally balanced briefing.</p><p class="india-lens-availability">${esc(lensNote)}</p>`;
+}
+function drawQuickExplainers() {
+  const terms=config?.glossary||[];
+  const section=$('#quick-explainers');
+  section.hidden=!terms.length;
+  $('#quick-explainer-list').innerHTML=terms.map(term=>`<button type="button" class="term-button" data-term-id="${esc(term.id)}" aria-haspopup="dialog" aria-label="Explain ${esc(term.term)} with a cited reference">${esc(term.term)} <span aria-hidden="true">ⓘ</span></button>`).join('');
 }
 async function load() {
   if (window.location.protocol === 'file:') {
@@ -254,7 +263,7 @@ $('#length').value=String(p.length||10); $('#freshness-hours').value=String(p.fr
 }
 function openTermExplanation(storyId, termId) {
   const stories=[...(data?.stories||[]),...(data?.unverifiedStories||[]),...(data?.reading?.saved||[]),...(data?.hiddenStories||[]),...(data?.deepRead?[data.deepRead]:[])];
-  const definition=stories.find(story=>story.id===storyId)?.related_terms?.find(term=>term.id===termId);
+  const definition=stories.find(story=>story.id===storyId)?.related_terms?.find(term=>term.id===termId)||config?.glossary?.find(term=>term.id===termId);
   if(!definition||!safeArticleUrl(definition.source_url))return;
   $('#term-title').textContent=definition.term;
   $('#term-description').textContent=definition.explanation;
@@ -263,8 +272,8 @@ function openTermExplanation(storyId, termId) {
   $('#term-dialog').showModal();
 }
 function handleTermClick(event) {
-  const button=event.target.closest('[data-term-story][data-term-id]');
-  if(button)openTermExplanation(button.dataset.termStory,button.dataset.termId);
+  const button=event.target.closest('[data-term-id]');
+  if(button)openTermExplanation(button.dataset.termStory||'',button.dataset.termId);
 }
 $('#settings-open').addEventListener('click',()=>{if(data&&config)openSettings();});
 $('#sign-out').addEventListener('click',async()=>{try{await request('/api/logout',{});window.location.assign('/');}catch(e){$('#status').textContent=`Could not sign out: ${e.message}`;}});
@@ -298,6 +307,7 @@ $('#undated-list').addEventListener('click',handleStoryAction);
 $('#story-list').addEventListener('click',handleTermClick);
 $('#reading-list').addEventListener('click',handleTermClick);
 $('#deep-wrap').addEventListener('click',handleTermClick);
+$('#quick-explainer-list').addEventListener('click',handleTermClick);
 $('#term-close').addEventListener('click',()=>$('#term-dialog').close());
 async function saveNote(id,note){
   if(stateless){const story=[...(data.stories||[]),...(data.unverifiedStories||[]),...(data.reading?.saved||[]),...(data.hiddenStories||[])].find(item=>item.id===id);if(!story)return;if(!story.read){$('#status').textContent='Mark this story read before adding a note.';return;}saveBrowserStory(story,{note:String(note).slice(0,280)});$('#status').textContent='Personal note saved in this browser.';return;}

@@ -142,6 +142,13 @@ a.source-chip { color: #335f50; text-decoration: underline; text-underline-offse
 .term-links > span { color: #53635d; font-size: 10px; }
 .term-button { border: 1px solid #cad9cf; border-radius: 999px; padding: 5px 8px; background: #f5faf6; color: #245d4d; font: 600 10px var(--sans); cursor: pointer; }
 .term-button:hover { background: #e5f0e8; }
+.preferences-button { display:flex; align-items:center; gap:6px; border:1px solid var(--line); font:600 11px var(--sans); padding:7px 10px; }
+.preferences-button span:first-child { font-size:18px; line-height:1; }
+.quick-explainers { margin:0 0 14px; padding:12px 15px; background:#fbfcf9; border:1px solid var(--line); border-radius:8px; }
+.quick-explainers summary { cursor:pointer; color:var(--green); font-size:11px; font-weight:700; }
+.quick-explainers > p { margin:8px 0 10px; color:var(--muted); font-size:11px; line-height:1.5; }
+.quick-explainer-list { display:flex; flex-wrap:wrap; gap:7px; }
+.india-lens-availability { margin:8px 0 0; color:#53635d; font-size:11px; line-height:1.5; }
 .india-lens { margin: 10px 0; border-left: 2px solid #7ba891; padding: 7px 10px; background: #f4f8f4; color: #34564a; }
 .india-lens summary { cursor: pointer; font-size: 10px; font-weight: 700; }
 .india-lens summary span { margin-left: 5px; color: #66766e; font-weight: 400; }
