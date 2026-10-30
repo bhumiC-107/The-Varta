@@ -133,6 +133,9 @@ a.source-chip { color: #335f50; text-decoration: underline; text-underline-offse
 .small-action { color: #43554f; }
 .brand-light { color: #53635d; }
 .story-top, .story-foot, .section-head, .reading-section-head { min-width: 0; }
+.file-open-notice { margin: 0 0 18px; }
+.file-open-notice code { color: var(--ink); font-weight: 700; }
+.file-open-notice a { color: var(--green); font-weight: 700; }
 .story-top { align-items: flex-start; gap: 8px; }
 .category { min-width: 0; overflow-wrap: anywhere; }
 .actions { min-width: 0; flex-wrap: wrap; justify-content: flex-end; }

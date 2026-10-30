@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#f5f6f2"><title>Morning Signal — Your daily briefing</title>
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
-<header class="topbar"><a class="brand" href="/"><span class="mark">ms</span><span>morning<span class="brand-light">signal</span></span></a><div class="top-actions"><span class="edition"><i></i> DAILY BRIEFING</span><button class="text-button" id="sign-out" type="button" hidden>Sign out</button><button class="icon-button" id="settings-open" aria-label="Open preferences" title="Preferences">☷</button></div></header>
+<header class="topbar"><a class="brand" href="./index.html"><span class="mark">ms</span><span>morning<span class="brand-light">signal</span></span></a><div class="top-actions"><span class="edition"><i></i> DAILY BRIEFING</span><button class="text-button" id="sign-out" type="button" hidden>Sign out</button><button class="icon-button" id="settings-open" aria-label="Open preferences" title="Preferences">☷</button></div></header>
 <main class="page">
   <section class="welcome"><div><p class="eyebrow" id="today">YOUR MORNING, IN CONTEXT</p><h1>A clearer view<br>of <span>what matters.</span></h1><p class="intro">A considered briefing for a curious mind. Global in scope, with India in the frame.</p></div><div class="datebox"><span class="sun" aria-hidden="true">◒</span><span>THE WORLD, IN BRIEF</span><strong id="date-label"></strong><small id="story-count" aria-live="polite">Checking your briefing…</small></div></section>
   <section class="focusbar"><span class="focus-icon">✳</span><div><small>TODAY’S DEEP READ</small><strong id="focus-title">One focused read, picked for today</strong></div><span class="focus-day" id="focus-day"></span></section>
@@ -31,11 +31,13 @@
   <section class="coverage-panel" aria-labelledby="coverage-title"><div><p class="eyebrow">FROM TODAY'S SUCCESSFUL FEED CHECKS</p><h2 id="coverage-title">Coverage in this briefing</h2></div><div id="coverage-indicator" role="status" aria-live="polite"></div></section>
   <div class="filters" id="filters" role="group" aria-label="Filter stories"></div>
   <p id="stateless-note" class="status" hidden>Reading list and progress save only in this browser. Nothing is sent to a hosted database.</p>
-  <div id="status" class="status" role="status"></div><div id="story-list" class="story-list"></div>
+  <div id="status" class="status" role="status"></div>
+  <section id="file-open-notice" class="empty file-open-notice" aria-labelledby="file-open-title" hidden><strong id="file-open-title">Run Morning Signal to load your briefing</strong><p>This file view can display the page, but news feeds and saved reading progress need the local app server.</p><p>In PowerShell, run <code>python server.py</code> from the project folder, then open <a href="http://127.0.0.1:8765">http://127.0.0.1:8765</a>.</p></section>
+  <div id="story-list" class="story-list"></div>
   <section id="undated-wrap" class="undated-wrap hidden" aria-labelledby="undated-title"><h2 id="undated-title">Date unverified</h2><p>These relevant feed items have no reliable publication timestamp, so they are kept separate and never outrank dated recent stories.</p><div id="undated-list" class="story-list"></div></section>
   <section class="source-note"><div class="source-note-icon" aria-hidden="true">◎</div><div><strong>News with its sources in view.</strong><p>Stories link to their publishers. Related coverage is grouped where headlines overlap. A cluster’s sources appear on the card.</p></div><button id="sources-toggle" class="text-button" aria-controls="source-panel" aria-expanded="false">View source status ↗</button></section>
   <section id="source-panel" class="source-panel hidden"></section>
-  <footer><span>Morning Signal</span><span>Made for a more informed morning.</span><a href="/README.md">About this project</a></footer>
+  <footer><span>Morning Signal</span><span>Made for a more informed morning.</span><a href="./README.md">About this project</a></footer>
 </main>
 <dialog id="settings-dialog" aria-labelledby="settings-title" aria-describedby="settings-description"><form method="dialog" id="settings-form"><div class="dialog-head"><div><p class="eyebrow">MAKE IT YOURS</p><h2 id="settings-title">Briefing preferences</h2></div><button class="icon-button" value="cancel" aria-label="Close preferences">×</button></div><p class="dialog-intro" id="settings-description">Your topic and region choices shape a transparent ranking. More/less feedback nudges similar topics and regions on this device; enabled sources determine which publishers are considered.</p>
   <fieldset><legend>Preferred regions</legend><p class="setting-help">Stories from these regions receive a small ranking boost. India also gets a modest coverage boost so it remains visible among your choices.</p><div class="checks" id="region-options"></div></fieldset>
@@ -45,5 +47,5 @@
   <div class="select-row"><label>Briefing length<select id="length"><option value="8">8 stories</option><option value="10">10 stories</option><option value="12">12 stories</option></select><small class="setting-help">Maximum stories to show; weaker matches may leave the briefing shorter.</small></label><label>Freshness window<select id="freshness-hours"><option value="24">24 hours</option><option value="48">48 hours</option><option value="72">72 hours</option><option value="168">7 days</option></select><small class="setting-help">Older dated stories are excluded from the briefing and deep read.</small></label><label>Reading context<select id="difficulty"><option>Quick scan</option><option>Standard</option><option>More context</option></select><small class="setting-help">Changes how much stored RSS context appears. It does not simplify the writing or add article text.</small></label><label>Daily reading goal<select id="daily-goal"><option value="1">1 article</option><option value="2">2 articles</option><option value="3">3 articles</option><option value="5">5 articles</option></select></label></div>
   <div class="dialog-actions"><span id="save-note"></span><button class="button-primary" type="button" id="save-settings">Save preferences</button></div>
 </form></dialog>
-<script src="/app.js"></script>
+<script src="./app.js"></script>
 </body></html>

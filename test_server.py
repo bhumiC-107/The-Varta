@@ -459,6 +459,15 @@ class FeedReliabilityTests(unittest.TestCase):
 
 
 class HTTPBoundaryTests(unittest.TestCase):
+    def test_direct_file_open_explains_that_local_server_is_required(self):
+        html = (server.ROOT / "index.html").read_text(encoding="utf-8")
+        script = (server.ROOT / "app.js").read_text(encoding="utf-8")
+        self.assertIn('href="./styles.css"', html)
+        self.assertIn('src="./app.js"', html)
+        self.assertIn('id="file-open-notice"', html)
+        self.assertIn("window.location.protocol === 'file:'", script)
+        self.assertIn("http://127.0.0.1:8765", html)
+
     def test_static_allowlist_excludes_database_and_config(self):
         self.assertEqual(set(server.STATIC_FILES.values()), {"index.html", "styles.css", "app.js", "README.md"})
         self.assertNotIn("/morning_signal.sqlite3", server.STATIC_FILES)

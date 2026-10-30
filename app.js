@@ -205,6 +205,14 @@ function drawCoverage() {
   panel.innerHTML=`<p>${esc(status)}${coverage.failed_today?` ${esc(coverage.failed_today)} feed ${coverage.failed_today===1?'failed':'feeds failed'} today and ${coverage.failed_today===1?'is':'are'} not counted.`:''}</p><div class="coverage-groups"><div><b>Publishers</b><div class="coverage-chips">${publishers||'<span class="coverage-muted">None yet</span>'}</div></div><div><b>Regions</b><div class="coverage-chips">${regions||'<span class="coverage-muted">None yet</span>'}</div></div></div><p class="coverage-note">${limited?'Coverage is limited today. ':' '}These regions describe selected stories from successful feeds; they do not guarantee a globally balanced briefing.</p>`;
 }
 async function load() {
+  if (window.location.protocol === 'file:') {
+    $('#story-count').textContent = 'Local server required';
+    $('#status').textContent = '';
+    $('#file-open-notice').hidden = false;
+    $('#refresh').disabled = true;
+    $('#settings-open').disabled = true;
+    return;
+  }
   $('#status').textContent='Loading your briefing…';
   try { await ensureSession();[data,config] = await Promise.all([request('/api/briefing'),request('/api/config')]);if(stateless){$('#status').textContent='Checking your sources and collecting fresh headlines…';await refreshFeeds(true);}else render(); }
   catch(e) { $('#status').textContent=`Could not load your briefing: ${e.message}`; }

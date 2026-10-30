@@ -14,6 +14,8 @@ python server.py
 
 Open <http://127.0.0.1:8765> and choose **Refresh feeds**. Stop with Ctrl+C. Local mode keeps story metadata, permitted feed excerpts, preferences, and reading activity in `morning_signal.sqlite3` using SQLite. To use a separate development database, set `MORNING_SIGNAL_SQLITE_PATH` to another filename first. The existing database and backups are excluded from Git and Vercel deployment.
 
+Do not open `index.html` by double-clicking it (`file://`). A file URL cannot call the local news API, so the page will explain how to start the server instead. Use the `http://127.0.0.1:8765` address above.
+
 ## Deploy to Vercel without a database
 
 The Vercel version is a public reader with no server-side database or sign-in. It needs no Neon/MySQL/Postgres account, database URL, password, session secret, or environment variable. On first open it automatically checks the enabled verified RSS feeds; **Refresh feeds** can check them again. The serverless request does not open SQLite or retain feed results. Read/save/hide actions, notes, the daily goal, reading history, and display mode are stored in this browser's `localStorage`, on this device only. They are not sent with feed requests. Clearing browser site data or using another browser/device clears or will not show that local reading state. Local mode remains available with SQLite.
@@ -75,6 +77,7 @@ Run the tests and syntax checks with Python 3.10+ and Node.js:
 python -m unittest -v
 python -m py_compile server.py api/index.py test_server.py test_deployment.py offline_evaluation.py
 node --check app.js
+node test_app_smoke.js
 python offline_evaluation.py
 ```
 
