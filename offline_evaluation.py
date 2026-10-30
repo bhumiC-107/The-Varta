@@ -13,6 +13,7 @@ SETTINGS = {
     "regions": ["India", "Asia", "Europe", "Africa", "Americas", "Middle East"],
     "freshness_hours": 48,
     "length": 8,
+    "morning_budget": 15,
 }
 EXCLUDED = ["Celebrity", "Influencer", "Entertainment gossip", "K-pop"]
 

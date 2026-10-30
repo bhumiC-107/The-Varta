@@ -14,7 +14,7 @@ python server.py
 
 Open <http://127.0.0.1:8765> and choose **Refresh feeds**. Stop with Ctrl+C. Local mode keeps story metadata, permitted feed excerpts, preferences, and reading activity in `morning_signal.sqlite3` using SQLite. To use a separate development database, set `MORNING_SIGNAL_SQLITE_PATH` to another filename first. The existing database and backups are excluded from Git and Vercel deployment.
 
-Do not open `index.html` by double-clicking it (`file://`). A file URL cannot call the local news API, so the page will explain how to start the server instead. Use the `http://127.0.0.1:8765` address above.
+If you open `index.html` by double-clicking it (`file://`), the page cannot call publisher feeds directly. Use the deployed website address to load stories and refresh feeds without a terminal. The hosted version stores reading progress in that browser's local storage. To use the local SQLite database instead, start `python server.py` and open `http://127.0.0.1:8765`.
 
 ## Deploy to Vercel without a database
 
@@ -56,15 +56,18 @@ Feed requests have a timeout, 1 MB response cap, 35 item limit, XML entity decla
 - Exactly one deep-read candidate is selected only when a recent relevant story matches the weekday theme. Important stories outside that theme can still appear in the briefing. If no candidate qualifies, the feature explains that instead of substituting an unrelated or stale story.
 - Default exclusions cover celebrity, influencer, entertainment gossip, and K-pop terms, with a narrow configured civic/humanitarian exception. Keyword rules can miss context and are not human editorial review.
 - Story context uses only feed titles, excerpts, and source metadata. It is a labeled feed-based paraphrase; short or missing excerpts produce an insufficiency note. “Why it may matter” is a cautious category template and cannot establish real-world consequences. Publisher links remain the authority for the full report.
+- The briefing defaults to a 10-minute scan budget, adjustable to 5 or 15 minutes. Publisher-supplied reading times are used when present; otherwise the app assigns a clearly labeled 2-minute planning allowance. Stories that do not fit are skipped, so a short budget can produce a shorter briefing. This budget covers the story list; the optional featured deep read is shown separately.
+- Non-India stories include a collapsed “India lens” with a category-aware question to check at the publisher. It is context, not a prediction, and does not claim an India-specific impact when the feed does not establish one.
+- Selected terms in headlines and feed excerpts can be opened as short, locally curated explainers with links to official or primary references. Terms and definitions live in `glossary.json`; the app does not fetch article pages or call an external definition service. Coverage is intentionally small and may not explain every unfamiliar name or phrase.
 
-Vercel ranking uses fixed defaults; local personalization settings are not sent to the server. The Vercel page automatically fetches stories on first open and keeps an optional reading list, read status, hidden list, personal notes, daily goal, streak, and weekly deep-read history in browser local storage. These browser-only settings persist across reloads in the same browser profile. They are not synced or backed up by the app.
+Vercel ranking uses fixed server defaults; local personalization settings are not sent to the server. The browser applies the selected morning time budget locally to the returned briefing. The Vercel page automatically fetches stories on first open and keeps an optional reading list, read status, hidden list, personal notes, daily goal, morning budget, reading context, streak, and weekly deep-read history in browser local storage. These browser-only settings persist across reloads in the same browser profile. They are not synced or backed up by the app.
 
 ## Project files
 
 - `server.py`: local SQLite application, bounded RSS/Atom collector, clustering, ranking, reading controls, and stateless feed collection helper.
 - `api/index.py`: public Vercel handler; serves the app and runs one-request RSS refreshes without a database.
 - `vercel.json`: Vercel Python routing and function duration.
-- `sources.json`, `editorial.json`: editable source and editorial rules.
+- `sources.json`, `editorial.json`, `glossary.json`: editable source, editorial, and curated term-reference configuration.
 - `index.html`, `styles.css`, `app.js`: responsive interface.
 - `test_server.py`, `test_deployment.py`: local and stateless deployment regression tests with fixtures.
 - `offline_evaluation.py`: deterministic offline editorial evaluation; fixtures are never mixed into live briefings.

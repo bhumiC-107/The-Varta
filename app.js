@@ -25,8 +25,8 @@ function savedStoryFreshness(s) {
 
 function browserState() {
   if(!stateless)return {stories:{},history:[],goal:1,difficulty:'Standard'};
-  try { const value=JSON.parse(localStorage.getItem(LOCAL_STATE_KEY)||'{}');return {stories:value.stories||{},history:Array.isArray(value.history)?value.history:[],goal:Number(value.goal)||1,difficulty:['Quick scan','Standard','More context'].includes(value.difficulty)?value.difficulty:'Standard'}; }
-  catch { return {stories:{},history:[],goal:1,difficulty:'Standard'}; }
+  try { const value=JSON.parse(localStorage.getItem(LOCAL_STATE_KEY)||'{}');return {stories:value.stories||{},history:Array.isArray(value.history)?value.history:[],goal:Number(value.goal)||1,difficulty:['Quick scan','Standard','More context'].includes(value.difficulty)?value.difficulty:'Standard',morningBudget:[5,10,15].includes(Number(value.morningBudget))?Number(value.morningBudget):10}; }
+  catch { return {stories:{},history:[],goal:1,difficulty:'Standard',morningBudget:10}; }
 }
 function writeBrowserState(state) {
   try { localStorage.setItem(LOCAL_STATE_KEY,JSON.stringify(state));return true; }
@@ -45,6 +45,12 @@ function saveBrowserStory(story, change) {
 }
 function localDateKey(date=new Date()) { return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`; }
 function safeArticleUrl(value) { try { const url=new URL(value);return url.protocol==='https:'&&!url.username&&!url.password; } catch { return false; } }
+function storyTimeAllowance(story) {
+  const sourceMinutes=Number(story.reading_minutes);
+  return Number.isInteger(sourceMinutes)&&sourceMinutes>=1&&sourceMinutes<=120
+    ? {minutes:sourceMinutes,label:'Publisher estimate'}
+    : {minutes:2,label:'2-minute planning allowance'};
+}
 function applyReaderMode(story, mode) {
   const c=story?.context;if(!c)return story;
   const original=c.original_publisher&&safeArticleUrl(c.original_publisher.url)?c.original_publisher:{name:(story.sources||[])[0]?.name||'Original publisher',url:story.url};
@@ -58,7 +64,9 @@ function applyBrowserState(payload) {
   if(!stateless||!payload)return payload;
   const state=browserState(),records=state.stories;
   const decorate=story=>{const saved=records[story.id];return saved?{...story,read:!!saved.read,saved:!!saved.saved,hidden:!!saved.hidden,feedback:saved.feedback||null,note:saved.note||null,read_date:saved.read_date||null}:story;};
-  payload.stories=(payload.stories||[]).map(decorate).map(story=>applyReaderMode(story,state.difficulty)).filter(story=>!story.hidden);
+  const candidates=(payload.stories||[]).map(decorate).filter(story=>!story.hidden),budgeted=[];let budgetUsed=0;
+  for(const story of candidates){const allowance=storyTimeAllowance(story);if(budgetUsed+allowance.minutes>state.morningBudget)continue;budgetUsed+=allowance.minutes;budgeted.push({...story,budget_minutes:allowance.minutes,budget_time_label:allowance.label});}
+  payload.stories=budgeted.map(story=>applyReaderMode(story,state.difficulty));
   payload.unverifiedStories=(payload.unverifiedStories||[]).map(decorate).map(story=>applyReaderMode(story,state.difficulty)).filter(story=>!story.hidden);
   payload.hiddenStories=Object.values(records).filter(story=>story.hidden).map(story=>story.snapshot||story).filter(story=>safeArticleUrl(story.url));
   const saved=Object.values(records).filter(story=>story.saved||story.note).map(story=>story.snapshot||story).filter(story=>safeArticleUrl(story.url)).map(decorate).map(story=>applyReaderMode(story,state.difficulty)).sort((a,b)=>String(b.published||'').localeCompare(String(a.published||'')));
@@ -66,7 +74,9 @@ function applyBrowserState(payload) {
   payload.reading={...(payload.reading||{}),goal:state.goal,read_today:readToday,
     deep_read_completed:state.history.some(item=>item.date===today&&item.deep),saved,
     history:state.history.filter(item=>item.date>=localDateKey(new Date(Date.now()-6*86400000))&&safeArticleUrl(item.url)).sort((a,b)=>b.date.localeCompare(a.date))};
-  payload.settings={...(payload.settings||{}),difficulty:state.difficulty,daily_goal:state.goal};
+  payload.settings={...(payload.settings||{}),difficulty:state.difficulty,daily_goal:state.goal,morning_budget:state.morningBudget};
+  payload.selection={...(payload.selection||{}),morning_budget:state.morningBudget,budget_used_minutes:budgetUsed,budget_limited:budgeted.length<candidates.length};
+  if(!budgeted.length&&candidates.length){payload.selection.empty_reason=`No selected stories fit your ${state.morningBudget}-minute scan budget.`;payload.selection.empty_next_steps=['Increase the morning budget in preferences','Refresh feeds for shorter or better-timed reports'];}
   if(payload.deepRead){payload.deepRead=applyReaderMode(decorate(payload.deepRead),state.difficulty);payload.deepReadCompleted=payload.reading.deep_read_completed;}
   payload.hiddenStories=payload.hiddenStories.map(story=>applyReaderMode(story,state.difficulty));
   return payload;
@@ -101,7 +111,17 @@ function storyContextMarkup(story) {
   const uncertainty=(context.not_clear||[]).length?`<section class="context-field"><h4>What’s not clear yet</h4><ul>${context.not_clear.map(item=>`<li>${esc(item)}</li>`).join('')}</ul></section>`:'';
   const why=context.why_matter?`<section class="context-field"><h4>Why it may matter</h4><p>${esc(context.why_matter)}</p></section>`:'';
   const excerpt=context.publisher_excerpt?`<section class="context-field publisher-excerpt"><h4>Available feed excerpt</h4><blockquote>${esc(context.publisher_excerpt)}</blockquote><small>${esc(context.publisher_excerpt_attribution)}</small></section>`:'';
-  return `<div class="story-context mode-${mode==='Quick scan'?'quick':mode==='More context'?'more':'standard'}"><section class="context-field"><h4>${mode==='Quick scan'?'Very short feed summary':'What happened'}</h4><p>${esc(context.summary||'The feed does not provide enough information for a reliable summary. Open the publisher report for context.')}</p><small>${esc(context.summary_label||'Feed-based summary. Open the publisher report for more context.')}</small></section>${why}${uncertainty}${excerpt}<section class="context-field sources-field"><h4>Sources</h4><ul><li><a class="original-source-link" href="${esc(original.url||story.url)}" target="_blank" rel="noopener noreferrer">Original report — ${esc(original.name)} ↗</a></li>${other||mode==='More context'?other||'<li>No other independent publisher is attached to this story.</li>':''}</ul></section></div>`;
+  const indiaLens=mode!=='Quick scan'&&story.india_lens?`<details class="india-lens"><summary>India lens <span>context, not a prediction</span></summary><p>${esc(story.india_lens)}</p></details>`:'';
+  return `<div class="story-context mode-${mode==='Quick scan'?'quick':mode==='More context'?'more':'standard'}"><section class="context-field"><h4>${mode==='Quick scan'?'Very short feed summary':'What happened'}</h4><p>${esc(context.summary||'The feed does not provide enough information for a reliable summary. Open the publisher report for context.')}</p><small>${esc(context.summary_label||'Feed-based summary. Open the publisher report for more context.')}</small></section>${why}${uncertainty}${excerpt}${indiaLens}<section class="context-field sources-field"><h4>Sources</h4><ul><li><a class="original-source-link" href="${esc(original.url||story.url)}" target="_blank" rel="noopener noreferrer">Original report — ${esc(original.name)} ↗</a></li>${other||mode==='More context'?other||'<li>No other independent publisher is attached to this story.</li>':''}</ul></section></div>`;
+}
+function termMarkup(story) {
+  const terms=(story.related_terms||[]).slice(0,3);
+  if(!terms.length)return '';
+  return `<div class="term-links"><span>Quick explanations</span>${terms.map(term=>`<button type="button" class="term-button" aria-haspopup="dialog" aria-label="Explain ${esc(term.term)} with a cited reference" data-term-story="${esc(story.id)}" data-term-id="${esc(term.id)}">${esc(term.term)} <span aria-hidden="true">ⓘ</span></button>`).join('')}</div>`;
+}
+function storyTimeMarkup(story) {
+  if(!story.budget_minutes)return '';
+  return `<span class="budget-time" title="${esc(story.budget_time_label)}">${esc(story.budget_minutes)} min · ${esc(story.budget_time_label)}</span>`;
 }
 function articleCard(s, unverified=false) {
   const context=storyContextMarkup(s);
@@ -114,13 +134,13 @@ function articleCard(s, unverified=false) {
   const reason=`<div class="why-here"><b>Why this is here</b><span>${explanations.map(esc).join(' · ')}</span></div><details class="score-details"><summary>Score breakdown</summary><p>These are rule-based score contributions, not a measure of truth or certainty.</p><ul>${breakdown}</ul></details>`;
   const feedback=stateless?'':`<div class="feedback-actions" role="group" aria-label="Local relevance feedback for ${esc(s.title)}"><button class="small-action" data-action="feedback-more" aria-pressed="${s.feedback==='more'}" aria-label="${s.feedback==='more'?'Remove More like this preference':'More like this'} for ${esc(s.title)}">${s.feedback==='more'?'✓ More like this':'More like this'}</button><button class="small-action" data-action="feedback-less" aria-pressed="${s.feedback==='less'}" aria-label="${s.feedback==='less'?'Remove Less like this preference':'Less like this'} for ${esc(s.title)}">${s.feedback==='less'?'✓ Less like this':'Less like this'}</button>${s.feedback?'<button class="small-action" data-action="feedback-clear">Undo preference</button>':''}</div><p class="feedback-help">These choices stay on this device. They adjust this story and give a small boost or reduction to matching topics and regions. Undo clears this story’s feedback.</p>`;
   const actions=`<div class="actions" role="group" aria-label="Story actions for ${esc(s.title)}"><button class="small-action ${s.saved?'on':''}" data-action="saved" aria-label="${s.saved?'Remove saved status from':'Save'} ${esc(s.title)}">${s.saved?'★ Saved':'☆ Save'}</button><button class="small-action" data-action="read" aria-label="Mark ${esc(s.title)} ${s.read?'unread':'read'}">${s.read?'✓ Read':'○ Read'}</button><button class="small-action" data-action="hidden" aria-label="Hide ${esc(s.title)}">× Hide</button></div>`;
-  return `<article class="story" data-story="${esc(s.id)}"><div class="story-top"><span class="category">${esc(s.category)} · ${esc(s.region)}${status?` · <span class="date-status">${esc(status)}</span>`:''}</span>${actions}</div><h3>${esc(s.title)}</h3>${mode==='Quick scan'?'':reason}${feedback}${context}${note}<div class="story-foot">${publicationMeta(s)}</div></article>`;
+  return `<article class="story" data-story="${esc(s.id)}"><div class="story-top"><span class="category">${esc(s.category)} · ${esc(s.region)}${status?` · <span class="date-status">${esc(status)}</span>`:''}</span>${actions}</div><h3>${esc(s.title)}</h3>${storyTimeMarkup(s)}${mode==='Quick scan'?'':reason}${termMarkup(s)}${feedback}${context}${note}<div class="story-foot">${publicationMeta(s)}</div></article>`;
 }
 
 function readingListCard(s) {
   const note=s.read?`<div class="note-editor"><label for="list-note-${esc(s.id)}">Personal note</label><textarea id="list-note-${esc(s.id)}" maxlength="280" placeholder="A thought to remember…">${esc(s.note||'')}</textarea><button class="small-action" data-save-note="${esc(s.id)}" aria-label="Save personal note for ${esc(s.title)}">Save note</button></div>`:'';
   const publisher=(s.sources||[]).map(x=>x.name).join(' · ')||'Publisher link';
-  return `<article class="reading-list-item"><div><span class="category">${esc(s.category)} · ${esc(s.region)}</span><h3><a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title)}</a></h3><p>${esc(publisher)} · ${esc(savedStoryFreshness(s))} · Fetched ${esc(dateFormat(s.fetched_at,{month:'short',day:'numeric'}))}</p></div><div class="reading-list-actions" role="group" aria-label="Reading list actions for ${esc(s.title)}"><button class="small-action" data-reading-action="read" data-id="${esc(s.id)}" aria-label="Mark ${esc(s.title)} ${s.read?'unread':'read'}">${s.read?'✓ Read':'○ Mark read'}</button><button class="small-action" data-reading-action="saved" data-id="${esc(s.id)}" aria-label="${s.saved?'Remove':'Save'} ${esc(s.title)} ${s.saved?'from':'to'} your reading list">${s.saved?'Remove':'Save for later'}</button></div>${note}</article>`;
+  return `<article class="reading-list-item" data-story="${esc(s.id)}"><div><span class="category">${esc(s.category)} · ${esc(s.region)}</span><h3><a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title)}</a></h3><p>${esc(publisher)} · ${esc(savedStoryFreshness(s))} · Fetched ${esc(dateFormat(s.fetched_at,{month:'short',day:'numeric'}))}</p>${termMarkup(s)}</div><div class="reading-list-actions" role="group" aria-label="Reading list actions for ${esc(s.title)}"><button class="small-action" data-reading-action="read" data-id="${esc(s.id)}" aria-label="Mark ${esc(s.title)} ${s.read?'unread':'read'}">${s.read?'✓ Read':'○ Mark read'}</button><button class="small-action" data-reading-action="saved" data-id="${esc(s.id)}" aria-label="${s.saved?'Remove':'Save'} ${esc(s.title)} ${s.saved?'from':'to'} your reading list">${s.saved?'Remove':'Save for later'}</button></div>${note}</article>`;
 }
 
 function hiddenStoryCard(s) {
@@ -146,7 +166,7 @@ function renderReading() {
   $('#reading-progress-bar').style.width=`${pct}%`;
   const progress=$('.progress-track');progress.setAttribute('aria-valuemax',String(goal));progress.setAttribute('aria-valuenow',String(Math.min(completed,goal)));
   const deep=data.deepRead;
-  $('#deep-wrap').innerHTML=deep?`<article class="today-card"><div class="deep-label">✳ &nbsp;${esc(data.focus.toUpperCase())} · ${esc(ageLabel(deep.published))}</div><h3>${esc(deep.title)}</h3>${storyContextMarkup(deep)}<div class="today-meta">${publicationMeta(deep)}${deep.reading_minutes?`<span>${esc(deep.reading_minutes)} min read</span>`:''}</div><div class="today-actions"><a class="button-primary" href="${esc(deep.url)}" target="_blank" rel="noopener noreferrer">Read at publisher ↗</a>${reading.deep_read_completed?'<span class="completed-label">✓ Deep read completed today</span>':'<button class="text-button" id="complete-deep">Mark deep read complete</button>'}</div></article>`:'<div class="empty reading-empty"><strong>No suitable recent deep read</strong><p>No dated, recent article matched today’s “'+esc(data.focus)+'” theme. Refresh feeds or check back later; the app will not substitute an unrelated or stale story.</p></div>';
+  $('#deep-wrap').innerHTML=deep?`<article class="today-card" data-story="${esc(deep.id)}"><div class="deep-label">✳ &nbsp;${esc(data.focus.toUpperCase())} · ${esc(ageLabel(deep.published))}</div><h3>${esc(deep.title)}</h3>${termMarkup(deep)}${storyContextMarkup(deep)}<div class="today-meta">${publicationMeta(deep)}${deep.reading_minutes?`<span>${esc(deep.reading_minutes)} min read</span>`:''}</div><div class="today-actions"><a class="button-primary" href="${esc(deep.url)}" target="_blank" rel="noopener noreferrer">Read at publisher ↗</a>${reading.deep_read_completed?'<span class="completed-label">✓ Deep read completed today</span>':'<button class="text-button" id="complete-deep">Mark deep read complete</button>'}</div></article>`:'<div class="empty reading-empty"><strong>No suitable recent deep read</strong><p>No dated, recent article matched today’s “'+esc(data.focus)+'” theme. Refresh feeds or check back later; the app will not substitute an unrelated or stale story.</p></div>';
   const saved=reading.saved||[],savedCount=saved.filter(item=>item.saved).length;$('#saved-count').textContent=savedCount?`${savedCount} saved`:'';
   $('#reading-list').innerHTML=saved.length?saved.map(readingListCard).join(''):'<div class="empty compact-empty"><strong>Your list is clear</strong><p>Save a story from the briefing and it will be here for later.</p></div>';
   const history=reading.history||[];
@@ -172,7 +192,9 @@ function render() {
   $('#story-list').innerHTML = filtered.map(articleCard).join('');
   if (s.length && !filtered.length) $('#story-list').innerHTML = `<div class="empty" style="grid-column:1/-1"><strong>No ${esc(category)} stories in this briefing.</strong><p>Try another category or refresh the enabled feeds for newer coverage.</p></div>`;
   const q=data.selection||{freshness_hours:48,fresh_count:s.length,stale_count:0,undated_count:0,requested:10};
-  $('#status').textContent=s.length<q.requested?`Showing ${s.length} stories from ${q.fresh_count} dated, recent relevant candidates (requested ${q.requested}); remaining items fell outside the top ranking band or freshness rules. ${q.stale_count} stale stories excluded. ${q.undated_count} date-unverified stories are separate.`:`Ranked by publication recency, your selected topics and regions, India coverage, and distinct publisher reporting. ${q.stale_count} stale stories excluded; ${q.undated_count} undated stories are separate.`;
+  const budget=Number(q.morning_budget||data.settings?.morning_budget)||10,used=Number(q.budget_used_minutes)||0;
+  $('#budget-summary').textContent=`${budget}-minute scan budget · ${used} min allocated${q.budget_limited?' · shorter selections fit the budget':''}. Publisher read times are used when available; otherwise each item gets a 2-minute planning allowance.`;
+  $('#status').textContent=s.length<q.requested?`Showing ${s.length} stories from ${q.fresh_count} dated, recent relevant candidates (requested ${q.requested}); ${q.budget_limited?'the morning time budget also limits the selection.':'remaining items fell outside the top ranking band or freshness rules.'} ${q.stale_count} stale stories excluded. ${q.undated_count} date-unverified stories are separate.`:`Ranked by publication recency, your selected topics and regions, India coverage, and distinct publisher reporting. ${q.stale_count} stale stories excluded; ${q.undated_count} undated stories are separate.`;
   $('#story-count').textContent = s.length ? `${s.length} ${s.length===1?'story':'stories'} in your briefing` : 'No stories yet';
   if (!s.length) {
     const next=(q.empty_next_steps||[]).map(x=>`<li>${esc(x)}</li>`).join('');
@@ -227,15 +249,29 @@ function openSettings() {
   const eligibleSources=config.sources.filter(s=>s.enabled&&s.verification==='verified');
   options('#source-options',eligibleSources.map(s=>s.id),sourceIds,'sources',Object.fromEntries(eligibleSources.map(s=>[s.id,s.name])));
   options('#excluded-options',p.excluded||[],p.excluded||[],'excluded');
-  $('#length').value=String(p.length||10); $('#freshness-hours').value=String(p.freshness_hours||48); $('#difficulty').value=p.difficulty||'Standard'; $('#daily-goal').value=String(p.daily_goal||1); $('#save-note').textContent='';
+$('#length').value=String(p.length||10); $('#freshness-hours').value=String(p.freshness_hours||48); $('#difficulty').value=p.difficulty||'Standard'; $('#daily-goal').value=String(p.daily_goal||1); $('#morning-budget').value=String(p.morning_budget||10); $('#save-note').textContent='';
   $('#settings-dialog').showModal();
+}
+function openTermExplanation(storyId, termId) {
+  const stories=[...(data?.stories||[]),...(data?.unverifiedStories||[]),...(data?.reading?.saved||[]),...(data?.hiddenStories||[]),...(data?.deepRead?[data.deepRead]:[])];
+  const definition=stories.find(story=>story.id===storyId)?.related_terms?.find(term=>term.id===termId);
+  if(!definition||!safeArticleUrl(definition.source_url))return;
+  $('#term-title').textContent=definition.term;
+  $('#term-description').textContent=definition.explanation;
+  $('#term-attribution').textContent=`Reference: ${definition.source_name}`;
+  const link=$('#term-source-link');link.href=definition.source_url;link.textContent=`Open ${definition.source_name} ↗`;
+  $('#term-dialog').showModal();
+}
+function handleTermClick(event) {
+  const button=event.target.closest('[data-term-story][data-term-id]');
+  if(button)openTermExplanation(button.dataset.termStory,button.dataset.termId);
 }
 $('#settings-open').addEventListener('click',()=>{if(data&&config)openSettings();});
 $('#sign-out').addEventListener('click',async()=>{try{await request('/api/logout',{});window.location.assign('/');}catch(e){$('#status').textContent=`Could not sign out: ${e.message}`;}});
 $('#save-settings').addEventListener('click',async()=>{
-  if(stateless){const state=browserState();state.goal=Number($('#daily-goal').value)||1;state.difficulty=$('#difficulty').value;writeBrowserState(state);applyBrowserState(data);render();$('#save-note').textContent='Saved in this browser';$('#settings-dialog').close();return;}
+  if(stateless){const state=browserState();state.goal=Number($('#daily-goal').value)||1;state.difficulty=$('#difficulty').value;state.morningBudget=Number($('#morning-budget').value)||10;writeBrowserState(state);applyBrowserState(data);render();$('#save-note').textContent='Saved in this browser';$('#settings-dialog').close();return;}
   const val=name=>$$(`input[name="${name}"]:checked`).map(el=>el.value);
-  try { await request('/api/settings',{regions:val('regions'),topics:val('topics'),sources:val('sources'),excluded:val('excluded'),length:Number($('#length').value),freshness_hours:Number($('#freshness-hours').value),difficulty:$('#difficulty').value,daily_goal:Number($('#daily-goal').value)}); $('#save-note').textContent='Saved'; $('#settings-dialog').close(); await load(); }
+  try { await request('/api/settings',{regions:val('regions'),topics:val('topics'),sources:val('sources'),excluded:val('excluded'),length:Number($('#length').value),freshness_hours:Number($('#freshness-hours').value),difficulty:$('#difficulty').value,daily_goal:Number($('#daily-goal').value),morning_budget:Number($('#morning-budget').value)}); $('#save-note').textContent='Saved'; $('#settings-dialog').close(); await load(); }
   catch(e){$('#save-note').textContent=`Could not save: ${e.message}`;}
 });
 $('#filters').addEventListener('click',e=>{const b=e.target.closest('[data-category]');if(b){category=b.dataset.category;drawFilters();render();}});
@@ -259,6 +295,10 @@ async function handleStoryAction(e) {
 }
 $('#story-list').addEventListener('click',handleStoryAction);
 $('#undated-list').addEventListener('click',handleStoryAction);
+$('#story-list').addEventListener('click',handleTermClick);
+$('#reading-list').addEventListener('click',handleTermClick);
+$('#deep-wrap').addEventListener('click',handleTermClick);
+$('#term-close').addEventListener('click',()=>$('#term-dialog').close());
 async function saveNote(id,note){
   if(stateless){const story=[...(data.stories||[]),...(data.unverifiedStories||[]),...(data.reading?.saved||[]),...(data.hiddenStories||[])].find(item=>item.id===id);if(!story)return;if(!story.read){$('#status').textContent='Mark this story read before adding a note.';return;}saveBrowserStory(story,{note:String(note).slice(0,280)});$('#status').textContent='Personal note saved in this browser.';return;}
   try{await request(`/api/story/${id}`,{note});await load();$('#status').textContent='Personal note saved on this device.';}

@@ -59,6 +59,15 @@ class VercelHandlerTests(unittest.TestCase):
             refresh.do_POST()
         self.assertEqual(refresh.response, (200, expected))
 
+    def test_glossary_configuration_is_available_to_stateless_reader(self):
+        config = self.make_handler("GET", "/api/config")
+        with patch.object(server, "connect", side_effect=AssertionError("public config must not open SQLite")):
+            config.do_GET()
+        self.assertEqual(config.response[0], 200)
+        glossary=config.response[1]["glossary"]
+        self.assertTrue(glossary)
+        self.assertTrue(all(server.safe_https_url(item["source_url"]) for item in glossary))
+
     def test_direct_function_preview_url_falls_back_to_site_root(self):
         handler = self.make_handler("GET", "/api/index")
         handler.do_GET()

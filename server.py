@@ -26,6 +26,7 @@ ROOT = Path(__file__).parent
 DB = Path(os.environ.get("MORNING_SIGNAL_SQLITE_PATH", ROOT / "morning_signal.sqlite3"))
 CONFIG = ROOT / "sources.json"
 EDITORIAL = ROOT / "editorial.json"
+GLOSSARY = ROOT / "glossary.json"
 PORT = 8765
 MAX_FEED_BYTES = 1_000_000
 MAX_POST_BYTES = 32_768
@@ -116,7 +117,7 @@ def init_db():
           "regions": ["India", "Asia", "Europe", "Africa", "Americas", "Middle East", "Global"],
           "topics": ["Technology", "Science", "Business", "World", "India"],
           "sources": [s["id"] for s in get_sources() if s.get("enabled")], "excluded": ["Celebrity", "Influencer", "Entertainment gossip", "K-pop"],
-          "length": 10, "difficulty": "Standard", "daily_goal": 1,
+          "length": 10, "difficulty": "Standard", "daily_goal": 1, "morning_budget": 10,
           "freshness_hours": 48,
         }
         for k, v in defaults.items():
@@ -137,6 +138,58 @@ def get_sources():
 
 def get_editorial():
     return json.loads(EDITORIAL.read_text(encoding="utf-8"))
+
+
+def get_glossary():
+    """Load a small local glossary, accepting only safe ids and HTTPS references."""
+    items = json.loads(GLOSSARY.read_text(encoding="utf-8"))
+    if not isinstance(items, list):
+        return []
+    valid, seen = [], set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        term_id, term = item.get("id"), item.get("term")
+        explanation, source_name, source_url = (item.get(key) for key in ("explanation", "source_name", "source_url"))
+        if (not isinstance(term_id, str) or not re.fullmatch(r"[a-z0-9-]{1,48}", term_id) or term_id in seen
+                or not isinstance(term, str) or not term.strip() or len(term) > 80
+                or not isinstance(explanation, str) or not explanation.strip() or len(explanation) > 600
+                or not isinstance(source_name, str) or len(source_name) > 120 or not safe_https_url(source_url)):
+            continue
+        valid.append({"id": term_id, "term": term.strip(), "explanation": explanation.strip(),
+                      "source_name": source_name.strip(), "source_url": source_url})
+        seen.add(term_id)
+    return valid
+
+
+def glossary_matches(text, glossary=None):
+    text = str(text or "")
+    matches = []
+    for item in get_glossary() if glossary is None else glossary:
+        if re.search(r"(?<!\w)" + re.escape(item["term"]) + r"(?!\w)", text, re.IGNORECASE):
+            matches.append(item)
+    return matches[:3]
+
+
+def india_lens(story):
+    """Offer a question to check against the source, never a claimed India impact."""
+    if story.get("region") == "India":
+        return None
+    text = f"{story.get('title', '')} {story.get('summary', '')}"
+    india_match = re.search(r"(?<!\w)(india|indian|delhi|mumbai|bengaluru|bangalore|rupee)(?!\w)", text, re.IGNORECASE)
+    denied_mention = re.search(r"\b(?:does not|doesn't|did not|didn't|no)\s+(?:specifically\s+)?(?:mention|refer to|identify|name)\s+(?:India|Indian|Delhi|Mumbai|Bengaluru|Bangalore|rupee)\b", text, re.IGNORECASE)
+    if india_match and not denied_mention:
+        return "The feed mentions India. Check which named people, institutions, or policies are involved; this excerpt alone may not establish the practical impact."
+    prompts = {
+        "Business": "For an India-focused read, check whether the publisher identifies a direct link to Indian trade, prices, currency, or markets. This feed excerpt does not establish one.",
+        "Technology": "Check whether the publisher identifies India-specific availability, rules, or adoption. This feed excerpt does not establish how the story affects Indian users or organizations.",
+        "Climate": "Check for India-specific exposure or official guidance in the source. This feed excerpt does not establish a direct impact on India.",
+        "Health": "Check for India-specific public-health guidance or evidence in the source. This feed excerpt does not establish what action, if any, is relevant in India.",
+        "Science": "Check whether the source identifies an India-specific research, policy, or public-use connection. This excerpt does not establish one.",
+        "World": "For an India-focused read, check whether the source states a direct Indian policy, regional, or humanitarian connection. This excerpt does not establish one.",
+        "Society": "Check whether the source identifies a direct connection to people or institutions in India. This excerpt does not establish one.",
+    }
+    return prompts.get(story.get("category"), "Check whether the source states a direct India connection; this feed excerpt does not establish one.")
 
 
 def public_sources(sources):
@@ -428,6 +481,7 @@ def rank_stories(stories, settings, now=None, feedback=None):
     topics, regions = set(settings.get("topics", [])), set(settings.get("regions", []))
     freshness_hours = max(1, min(720, int(settings.get("freshness_hours", 48))))
     feedback = feedback or {"topics": {}, "regions": {}}
+    glossary = get_glossary()
     ranked = []
     for story in stories:
         text = f"{story['title']} {story.get('summary', '')}"
@@ -477,6 +531,8 @@ def rank_stories(stories, settings, now=None, feedback=None):
         story["rank_reason"] = " · ".join(story["why_this_is_here"]) or "No non-zero ranking signal; date is unverified"
         story["context"] = story_context(story)
         story["display_context"] = story_context_for_mode(story["context"], settings.get("difficulty", "Standard"))
+        story["india_lens"] = india_lens(story)
+        story["related_terms"] = glossary_matches(text, glossary)
         ranked.append(story)
     return sorted(ranked, key=lambda s: (s["rank_score"], s.get("published") or ""), reverse=True)
 
@@ -675,7 +731,7 @@ def stateless_briefing(fetcher=None, now=None):
     settings = {"regions": ["India", "Asia", "Europe", "Africa", "Americas", "Middle East", "Global"],
         "topics": ["Technology", "Science", "Business", "World", "India"], "sources": [s["id"] for s in sources],
         "excluded": list(get_editorial().get("excluded_terms", {})), "length": 10, "difficulty": "Standard",
-        "daily_goal": 1, "freshness_hours": 48}
+        "daily_goal": 1, "freshness_hours": 48, "morning_budget": 15}
     weekday = now.astimezone().weekday()
     selection = select_daily_briefing(clustered, settings, weekday, now=now)
     selected = selection["stories"]
@@ -684,7 +740,7 @@ def stateless_briefing(fetcher=None, now=None):
     coverage = briefing_coverage(selected, sources, statuses, now.astimezone().date())
     coverage["failed_today"] = sum(bool(x.get("error")) for x in statuses.values())
     return {"stories": selected, "hiddenStories": [], "unverifiedStories": selection["unverified"],
-        "selection": {**{k: selection[k] for k in ("fresh_count", "undated_count", "stale_count", "available_count", "requested", "empty_reason", "empty_next_steps")},
+        "selection": {**{k: selection[k] for k in ("fresh_count", "undated_count", "stale_count", "available_count", "requested", "empty_reason", "empty_next_steps", "morning_budget", "budget_used_minutes", "budget_limited")},
                        "freshness_hours": settings["freshness_hours"]},
         "deepRead": selection["deep"], "focus": FOCUS[weekday], "settings": settings,
         "reading": {"goal": 1, "read_today": 0, "deep_read_completed": False, "history": [], "saved": []},
@@ -706,6 +762,13 @@ def save_daily_goal(db, value):
         raise ValueError("Daily goal must be between 1 and 10 articles")
     db.execute("INSERT OR REPLACE INTO settings VALUES ('daily_goal',?)", (json.dumps(goal),))
     return goal
+
+
+def save_morning_budget(db, value):
+    if type(value) is not int or value not in {5, 10, 15}:
+        raise ValueError("Morning budget must be 5, 10, or 15 minutes")
+    db.execute("INSERT OR REPLACE INTO settings VALUES ('morning_budget',?)", (json.dumps(value),))
+    return value
 
 
 def update_story_record(db, story_id, changes, now=None):
@@ -753,7 +816,7 @@ def weekly_reading_history(db, today=None):
     return [item for item in result if safe_https_url(item["url"])]
 
 
-def story_payload(row, db):
+def story_payload(row, db, glossary=None):
     item = dict(row)
     item["published"] = parse_publication_time(item.get("published"))
     if not safe_https_url(item.get("url")):
@@ -762,13 +825,15 @@ def story_payload(row, db):
     for source in item["sources"]:
         if not safe_https_url(source.get("url")):
             source["url"] = ""
+    item["india_lens"] = india_lens(item)
+    item["related_terms"] = glossary_matches(f"{item.get('title', '')} {item.get('summary', '')}", glossary)
     return item
 
 
-def hidden_story_payloads(db):
+def hidden_story_payloads(db, glossary=None):
     """Return locally hidden stories for the separate restore view only."""
     rows = db.execute("SELECT * FROM stories WHERE hidden=1 ORDER BY COALESCE(published,created) DESC LIMIT 500").fetchall()
-    return [story_payload(row, db) for row in rows if safe_https_url(row["url"])]
+    return [story_payload(row, db, glossary) for row in rows if safe_https_url(row["url"])]
 
 
 def focus_match(story, weekday):
@@ -822,6 +887,13 @@ def balanced_briefing(stories, limit, preferred_regions):
                     break
         if not progressed:
             break
+    selected_ids = {id(story) for story in selected}
+    for story in quality_pool:
+        if len(selected) >= limit:
+            break
+        if id(story) not in selected_ids:
+            selected.append(story)
+            selected_ids.add(id(story))
     return selected[:limit]
 
 
@@ -841,7 +913,28 @@ def select_daily_briefing(stories, settings, weekday, now=None, feedback=None):
     recent = [story for story in ranked if story["date_status"] == "recent" and story["qualifies"]]
     undated = [story for story in ranked if story["date_status"] == "unverified" and story["qualifies"]]
     requested = max(1, min(25, int(settings.get("length", 10))))
-    selected = balanced_briefing(recent, requested, settings.get("regions", []))
+    try:
+        morning_budget = int(settings.get("morning_budget", 10))
+    except (TypeError, ValueError):
+        morning_budget = 10
+    if morning_budget not in {5, 10, 15}:
+        morning_budget = 10
+    regional_candidates = balanced_briefing(recent, len(recent), settings.get("regions", []))
+    selected, time_used = [], 0
+    for story in regional_candidates:
+        if len(selected) >= requested:
+            break
+        supplied = story.get("reading_minutes")
+        if type(supplied) is int and 1 <= supplied <= 120:
+            minutes, label = supplied, "Publisher estimate"
+        else:
+            minutes, label = 2, "2-minute planning allowance"
+        if time_used + minutes > morning_budget:
+            continue
+        story["budget_minutes"] = minutes
+        story["budget_time_label"] = label
+        selected.append(story)
+        time_used += minutes
     deep = next((story for story in recent if focus_match(story, weekday)), None)
     stale_count = sum(1 for story in ranked if story["date_status"] == "stale")
     empty_reason = None
@@ -850,6 +943,9 @@ def select_daily_briefing(stories, settings, weekday, now=None, feedback=None):
         if not ranked:
             empty_reason = "No stories are stored yet."
             next_steps = ["Refresh enabled sources", "Check source status for feed errors"]
+        elif recent and not selected:
+            empty_reason = f"No qualifying story fits your {morning_budget}-minute scan budget."
+            next_steps = ["Increase the morning budget in settings", "Refresh sources for shorter or better-timed reports"]
         else:
             empty_reason = "No dated, recent stories matched the current relevance rules."
             if stale_count:
@@ -860,6 +956,8 @@ def select_daily_briefing(stories, settings, weekday, now=None, feedback=None):
     return {"stories": selected, "unverified": undated[:3], "deep": deep,
         "fresh_count": len(recent), "undated_count": len(undated),
         "stale_count": stale_count, "available_count": len(ranked), "requested": requested,
+        "morning_budget": morning_budget, "budget_used_minutes": time_used,
+        "budget_limited": len(selected) < min(requested, len(regional_candidates)),
         "empty_reason": empty_reason, "empty_next_steps": next_steps}
 
 
@@ -921,17 +1019,18 @@ def api_data():
     with connect() as db:
         settings = read_settings(db)
         sources = get_sources()
+        glossary = get_glossary()
         enabled = settings.get("sources", [s["id"] for s in sources if s.get("enabled")])
         rows = db.execute("SELECT * FROM stories WHERE hidden=0 ORDER BY COALESCE(published,created) DESC LIMIT 500").fetchall()
         stories = []
         for row in rows:
             if not safe_https_url(row["url"]):
                 continue
-            item = story_payload(row, db)
+            item = story_payload(row, db, glossary)
             item["sources"] = [source for source in item["sources"] if source["id"] in enabled]
             if item["sources"]:
                 stories.append(item)
-        hidden_stories = hidden_story_payloads(db)
+        hidden_stories = hidden_story_payloads(db, glossary)
         weekday = dt.date.today().weekday()
         today_focus = FOCUS[weekday]
         selection = select_daily_briefing(stories, settings, weekday, feedback=relevance_feedback(db))
@@ -944,7 +1043,7 @@ def api_data():
         history = weekly_reading_history(db, local_today)
         completed_today = bool(deep and db.execute("SELECT 1 FROM reading_history WHERE story_id=? AND completed_on=?", (deep["id"], local_today.isoformat())).fetchone())
         saved_rows = db.execute("SELECT * FROM stories WHERE saved=1 OR (note IS NOT NULL AND note!='') ORDER BY COALESCE(published,created) DESC").fetchall()
-        saved_stories = [story_payload(row, db) for row in saved_rows if safe_https_url(row["url"])]
+        saved_stories = [story_payload(row, db, glossary) for row in saved_rows if safe_https_url(row["url"])]
         safe_sources = public_sources(sources)
         source_statuses, source_rows = {}, []
         for source in safe_sources:
@@ -953,7 +1052,7 @@ def api_data():
             source_statuses[source["id"]] = status
             source_rows.append({**source, "status": status})
         coverage = briefing_coverage(stories, sources, source_statuses, local_today)
-        selection_summary = {key: selection[key] for key in ("fresh_count", "undated_count", "stale_count", "available_count", "requested", "empty_reason", "empty_next_steps")}
+        selection_summary = {key: selection[key] for key in ("fresh_count", "undated_count", "stale_count", "available_count", "requested", "empty_reason", "empty_next_steps", "morning_budget", "budget_used_minutes", "budget_limited")}
         selection_summary["freshness_hours"] = max(1, min(720, int(settings.get("freshness_hours", 48))))
         return {"stories": stories, "hiddenStories": hidden_stories, "unverifiedStories": selection["unverified"], "selection": selection_summary, "deepRead": deep, "focus": today_focus, "settings": settings,
           "reading": {"goal": max(1, min(10, int(settings.get("daily_goal", 1)))), "read_today": read_today,
@@ -1018,14 +1117,14 @@ class Handler(BaseHTTPRequestHandler):
                                   "empty_next_steps": ["Select Refresh feeds to check the configured publishers"]},
                     "deepRead": None, "focus": FOCUS[dt.date.today().weekday()],
                     "settings": {"regions": [], "topics": [], "sources": [], "excluded": [], "length": 10,
-                                 "difficulty": "Standard", "daily_goal": 1, "freshness_hours": 48},
+                                 "difficulty": "Standard", "daily_goal": 1, "freshness_hours": 48, "morning_budget": 10},
                     "reading": {"goal": 1, "read_today": 0, "deep_read_completed": False, "history": [], "saved": []},
                     "coverage": {"checked_today": 0, "failed_today": 0, "story_count": 0, "regions": [], "publishers": []},
                     "sources": [{**s, "status": None} for s in public_sources(get_sources())]})
             return self.send_json(api_data())
         if path == "/api/config":
             sources = public_sources(get_sources())
-            return self.send_json({"sources": sources, "categories": CATEGORIES, "focus": FOCUS[dt.date.today().weekday()], "stateless": bool(os.environ.get("VERCEL"))})
+            return self.send_json({"sources": sources, "categories": CATEGORIES, "glossary": get_glossary(), "focus": FOCUS[dt.date.today().weekday()], "stateless": bool(os.environ.get("VERCEL"))})
         name = STATIC_FILES.get(path)
         file = ROOT / name if name else None
         if not file or not file.is_file():
@@ -1056,7 +1155,7 @@ class Handler(BaseHTTPRequestHandler):
             try: return self.send_json(refresh())
             except RuntimeError as ex: return self.send_json({"error":str(ex)}, 409)
         if path == "/api/settings":
-            allowed = {"regions", "topics", "sources", "excluded", "length", "difficulty", "daily_goal", "freshness_hours"}
+            allowed = {"regions", "topics", "sources", "excluded", "length", "difficulty", "daily_goal", "freshness_hours", "morning_budget"}
             if set(data) - allowed: return self.send_json({"error":"Unexpected settings field"}, 400)
             try:
                 source_ids = {s["id"] for s in get_sources() if s.get("enabled") and s.get("verification") == "verified"}
@@ -1069,6 +1168,7 @@ class Handler(BaseHTTPRequestHandler):
                 if "length" in data and (type(data["length"]) is not int or not 1 <= data["length"] <= 25): raise ValueError("Briefing length must be 1 to 25")
                 if "freshness_hours" in data and (type(data["freshness_hours"]) is not int or data["freshness_hours"] not in {24, 48, 72, 168}): raise ValueError("Freshness window must be 24, 48, 72, or 168 hours")
                 if "difficulty" in data and (not isinstance(data["difficulty"], str) or data["difficulty"] not in READING_MODES): raise ValueError("Invalid reading context mode")
+                if "morning_budget" in data and (type(data["morning_budget"]) is not int or data["morning_budget"] not in {5, 10, 15}): raise ValueError("Morning budget must be 5, 10, or 15 minutes")
             except ValueError as ex: return self.send_json({"error":str(ex)}, 400)
             goal = None
             if "daily_goal" in data:
@@ -1082,7 +1182,10 @@ class Handler(BaseHTTPRequestHandler):
                     if key in allowed:
                         if key == "daily_goal":
                             value = goal
-                        db.execute("INSERT OR REPLACE INTO settings VALUES (?,?)", (key, json.dumps(value)))
+                        if key == "morning_budget":
+                            save_morning_budget(db, value)
+                        else:
+                            db.execute("INSERT OR REPLACE INTO settings VALUES (?,?)", (key, json.dumps(value)))
             return self.send_json({"ok": True})
         if path == "/api/reading/complete":
             if set(data) != {"story_id"}: return self.send_json({"error":"Expected only story_id"}, 400)

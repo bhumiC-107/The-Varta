@@ -143,6 +143,11 @@ class EditorialTests(unittest.TestCase):
         self.assertGreaterEqual(regions.count("India"), 3)
         self.assertLessEqual(max(regions.count(r) for r in set(regions)), 3)
 
+    def test_balancing_uses_remaining_high_quality_stories_when_only_one_region_is_available(self):
+        stories=[{"id":f"india-{i}","region":"India","rank_score":10-i/10} for i in range(5)]
+        selected=server.balanced_briefing(stories,5,["India","Asia"])
+        self.assertEqual([story["id"] for story in selected],[f"india-{i}" for i in range(5)])
+
     def test_geography_does_not_force_low_scoring_region_story(self):
         stories = [{"id":f"eu-{i}","region":"Europe","rank_score":10-i*.1} for i in range(8)]
         stories += [{"id":"low-india","region":"India","rank_score":1}]
@@ -170,9 +175,24 @@ class ReadingProgressTests(unittest.TestCase):
             settings=server.read_settings(db)
             self.assertEqual(settings["daily_goal"],1)
             self.assertEqual(settings["freshness_hours"],48)
+            self.assertEqual(settings["morning_budget"],10)
             self.assertEqual(server.save_daily_goal(db,3),3)
+            self.assertEqual(server.save_morning_budget(db,15),15)
         with server.connect() as db:
             self.assertEqual(server.read_settings(db)["daily_goal"],3)
+            self.assertEqual(server.read_settings(db)["morning_budget"],15)
+            with self.assertRaises(ValueError): server.save_morning_budget(db,7)
+
+    def test_morning_budget_default_migration_preserves_existing_choices_and_stories(self):
+        with server.connect() as db:
+            db.execute("INSERT OR REPLACE INTO settings VALUES ('topics',?)", (server.json.dumps(["Technology"]),))
+            server.save_morning_budget(db,5)
+        server.init_db()
+        with server.connect() as db:
+            settings=server.read_settings(db)
+            self.assertEqual(settings["morning_budget"],5)
+            self.assertEqual(settings["topics"],["Technology"])
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM stories").fetchone()[0],1)
 
     def test_reading_context_mode_preference_persists_locally(self):
         with server.connect() as db:
@@ -491,6 +511,28 @@ class FreshnessAndFeedbackTests(unittest.TestCase):
         self.assertIsNone(server.parse_publication_time("not a date", self.now))
         self.assertIsNone(server.parse_publication_time("2026-10-23T12:00:00Z", self.now))
 
+    def test_morning_budget_fits_stories_and_marks_estimates_honestly(self):
+        published=self.now.isoformat()
+        stories=[
+            {"id":"three","title":"India technology bulletin three minutes","summary":"","published":published,"category":"Technology","region":"India","reading_minutes":3,"sources":[]},
+            {"id":"four","title":"India technology bulletin four minutes","summary":"","published":published,"category":"Technology","region":"India","reading_minutes":4,"sources":[]},
+            {"id":"unknown","title":"India technology bulletin no read time","summary":"","published":published,"category":"Technology","region":"India","sources":[]},
+        ]
+        result=server.select_daily_briefing(stories,{"topics":["Technology"],"regions":["India"],"freshness_hours":48,"length":8,"morning_budget":5},1,self.now)
+        self.assertEqual([item["id"] for item in result["stories"]],["three","unknown"])
+        self.assertEqual(result["budget_used_minutes"],5)
+        self.assertEqual(result["stories"][0]["budget_time_label"],"Publisher estimate")
+        self.assertEqual(result["stories"][1]["budget_minutes"],2)
+        self.assertEqual(result["stories"][1]["budget_time_label"],"2-minute planning allowance")
+        self.assertTrue(result["budget_limited"])
+
+    def test_morning_budget_empty_state_when_nothing_fits(self):
+        story={"id":"too-long","title":"India technology report","summary":"","published":self.now.isoformat(),"category":"Technology","region":"India","reading_minutes":8,"sources":[]}
+        result=server.select_daily_briefing([story],{"topics":["Technology"],"regions":["India"],"freshness_hours":48,"length":8,"morning_budget":5},1,self.now)
+        self.assertEqual(result["stories"],[])
+        self.assertIn("5-minute scan budget",result["empty_reason"])
+        self.assertTrue(result["empty_next_steps"])
+
     def test_recent_stale_and_undated_items_are_separated_and_deep_read_stays_recent(self):
         stories = [
             {"id":"fresh", "title":"New chip security research", "summary":"A report", "published":(self.now-server.dt.timedelta(hours=3)).isoformat(), "category":"Technology", "region":"India", "sources":[{"id":"toi","publisher_group":"toi","title":"New chip security research"}]},
@@ -613,6 +655,32 @@ class FreshnessAndFeedbackTests(unittest.TestCase):
         self.assertEqual(result["empty_reason"],"No dated, recent stories matched the current relevance rules.")
         self.assertTrue(any("freshness window" in step for step in result["empty_next_steps"]))
         self.assertTrue(any("Date-unverified" in step for step in result["empty_next_steps"]))
+
+
+class LearningContextTests(unittest.TestCase):
+    def test_glossary_only_matches_whole_terms_and_has_safe_attributed_references(self):
+        matches=server.glossary_matches("Quantum computing is distinct from ordinary computing; open source has licensing criteria.")
+        self.assertEqual({item["id"] for item in matches},{"quantum-computing","open-source"})
+        self.assertTrue(all(server.safe_https_url(item["source_url"]) and item["source_name"] for item in matches))
+        self.assertEqual(server.glossary_matches("reopen sources are not a match"),[])
+
+    def test_glossary_filters_unsafe_reference_urls(self):
+        with tempfile.TemporaryDirectory(dir=server.ROOT) as directory:
+            glossary_path=Path(directory)/"glossary.json"
+            glossary_path.write_text(server.json.dumps([{"id":"bad","term":"bad term","explanation":"No remote text","source_name":"Unsafe","source_url":"javascript:alert(1)"}]),encoding="utf-8")
+            with patch.object(server,"GLOSSARY",glossary_path):
+                self.assertEqual(server.get_glossary(),[])
+
+    def test_india_lens_is_a_cautious_source_check_not_a_impact_claim(self):
+        story={"region":"Europe","category":"Business","title":"Central bank changes rates","summary":"The feed contains no local impact details."}
+        lens=server.india_lens(story)
+        self.assertIn("check whether the publisher identifies",lens)
+        self.assertIn("does not establish",lens)
+        self.assertIsNone(server.india_lens({**story,"region":"India"}))
+        explicit=server.india_lens({**story,"summary":"Indian banks are mentioned in the feed."})
+        self.assertIn("feed mentions India",explicit)
+        negated=server.india_lens({**story,"summary":"The article does not mention India."})
+        self.assertIn("check whether the publisher identifies",negated)
 
 
 class StoryContextTests(unittest.TestCase):

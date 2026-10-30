@@ -1,0 +1,44 @@
+[
+  {
+    "id": "carbon-pricing",
+    "term": "carbon pricing",
+    "explanation": "Policies that put an explicit price on greenhouse-gas emissions. Examples include a carbon tax or an emissions-trading system; the details vary by jurisdiction.",
+    "source_name": "World Bank · Carbon pricing overview",
+    "source_url": "https://documents1.worldbank.org/curated/en/418161467996715909/pdf/Carbon0pricing0e0released0late02016.pdf"
+  },
+  {
+    "id": "federal-reserve",
+    "term": "Federal Reserve",
+    "explanation": "The central banking system of the United States. Its responsibilities include U.S. monetary policy and financial-system oversight.",
+    "source_name": "Federal Reserve · About the Fed",
+    "source_url": "https://www.federalreserve.gov/aboutthefed.htm"
+  },
+  {
+    "id": "open-source",
+    "term": "open source",
+    "explanation": "For software, the label refers to licensing terms that meet the Open Source Definition, including rights to access source code and make and share modifications.",
+    "source_name": "Open Source Initiative · Open Source Definition",
+    "source_url": "https://opensource.org/osd"
+  },
+  {
+    "id": "quantum-computing",
+    "term": "quantum computing",
+    "explanation": "Computing based on quantum information and operations. It is a distinct approach to computation, not a general faster replacement for ordinary computers.",
+    "source_name": "NIST · Quantum information science",
+    "source_url": "https://www.nist.gov/quantum-information-science"
+  },
+  {
+    "id": "repo-rate",
+    "term": "repo rate",
+    "explanation": "In India, this is a rate used when banks borrow from the Reserve Bank of India against eligible collateral. Its policy role and operating details can change over time.",
+    "source_name": "Reserve Bank of India · Monetary statistics guide",
+    "source_url": "https://dbieold.rbi.org.in/DBIE/doc/Comprehensive%20Guide%20for%20Monthly%20Bulletin.pdf"
+  },
+  {
+    "id": "world-trade-organization",
+    "term": "World Trade Organization",
+    "explanation": "An international organization dealing with trade rules among its members and providing a forum for trade negotiations and dispute procedures.",
+    "source_name": "World Trade Organization · Who we are",
+    "source_url": "https://www.wto.org/english/res_e/booksp_e/25yr_pub_e.pdf"
+  }
+]

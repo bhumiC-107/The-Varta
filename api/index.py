@@ -54,16 +54,19 @@ class handler(BaseHTTPRequestHandler):
         if path == "/api/config":
             sources = app.public_sources(app.get_sources())
             return self.send_json({"sources": sources, "categories": app.CATEGORIES,
+                                   "glossary": app.get_glossary(),
                                    "focus": app.FOCUS[app.dt.date.today().weekday()], "stateless": True})
         if path == "/api/briefing":
             return self.send_json({"stories": [], "hiddenStories": [], "unverifiedStories": [],
-                "selection": {"freshness_hours": 48, "fresh_count": 0, "stale_count": 0,
+                "selection": {"freshness_hours": 48, "morning_budget": 10, "budget_used_minutes": 0,
+                              "budget_limited": False, "fresh_count": 0, "stale_count": 0,
                               "undated_count": 0, "requested": 10,
                               "empty_reason": "Refresh feeds to collect today's stories.",
                               "empty_next_steps": ["Select Refresh feeds to check the configured publishers"]},
                 "deepRead": None, "focus": app.FOCUS[app.dt.date.today().weekday()],
                 "settings": {"regions": [], "topics": [], "sources": [], "excluded": [], "length": 10,
-                             "difficulty": "Standard", "daily_goal": 1, "freshness_hours": 48},
+                             "difficulty": "Standard", "daily_goal": 1, "freshness_hours": 48,
+                             "morning_budget": 10},
                 "reading": {"goal": 1, "read_today": 0, "deep_read_completed": False, "history": [], "saved": []},
                 "coverage": {"checked_today": 0, "failed_today": 0, "story_count": 0, "regions": [], "publishers": []},
                 "sources": [{**s, "status": None} for s in app.public_sources(app.get_sources())]})
