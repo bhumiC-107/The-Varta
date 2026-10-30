@@ -2,6 +2,7 @@ const $ = (s, root=document) => root.querySelector(s);
 const $$ = (s, root=document) => [...root.querySelectorAll(s)];
 const categories = ['All', 'World', 'India', 'Technology', 'Business', 'Science', 'Climate', 'Health', 'Society'];
 let data = null, category = 'All', config = null, hiddenOpen = false, csrfToken = null, privateSession = false, sessionChecked = false, stateless = false;
+const LOCAL_STATE_KEY='morning-signal-reader-v1';
 const esc = value => String(value || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const dateFormat = (value, options={}) => { if (!value) return 'Time unavailable'; const date = new Date(value); return Number.isNaN(+date) ? 'Time unavailable' : new Intl.DateTimeFormat(undefined, options).format(date); };
 function ageLabel(value) {
@@ -22,6 +23,55 @@ function savedStoryFreshness(s) {
   return Date.now()-new Date(s.published).getTime()>windowHours*3600000?'Stale · outside briefing freshness window':ageLabel(s.published);
 }
 
+function browserState() {
+  if(!stateless)return {stories:{},history:[],goal:1,difficulty:'Standard'};
+  try { const value=JSON.parse(localStorage.getItem(LOCAL_STATE_KEY)||'{}');return {stories:value.stories||{},history:Array.isArray(value.history)?value.history:[],goal:Number(value.goal)||1,difficulty:['Quick scan','Standard','More context'].includes(value.difficulty)?value.difficulty:'Standard'}; }
+  catch { return {stories:{},history:[],goal:1,difficulty:'Standard'}; }
+}
+function writeBrowserState(state) {
+  try { localStorage.setItem(LOCAL_STATE_KEY,JSON.stringify(state));return true; }
+  catch { $('#status').textContent='Browser storage is unavailable. Your changes may not survive a reload.';return false; }
+}
+function saveBrowserStory(story, change) {
+  const state=browserState(),old=state.stories[story.id]||{};
+  if(old.hidden&&change.hidden===false&&data&&!data.stories.some(item=>item.id===story.id)&&story.date_status==='recent'&&story.qualifies)data.stories.push(story);
+  const copy={...story,...old,...change};
+  copy.snapshot={...story,...(old.snapshot||{}),...change};
+  state.stories[story.id]=copy;
+  if(!copy.read&&!copy.saved&&!copy.hidden&&!copy.note&&!copy.feedback)delete state.stories[story.id];
+  writeBrowserState(state);
+  applyBrowserState(data);
+  render();
+}
+function localDateKey(date=new Date()) { return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`; }
+function safeArticleUrl(value) { try { const url=new URL(value);return url.protocol==='https:'&&!url.username&&!url.password; } catch { return false; } }
+function applyReaderMode(story, mode) {
+  const c=story?.context;if(!c)return story;
+  const original=c.original_publisher&&safeArticleUrl(c.original_publisher.url)?c.original_publisher:{name:(story.sources||[])[0]?.name||'Original publisher',url:story.url};
+  const others=(c.other_publishers||[]).filter(source=>safeArticleUrl(source.url));
+  story.display_context=mode==='Quick scan'?{mode,summary:c.quick_summary||c.what_happened,summary_label:c.quick_summary_label||c.what_happened_label,original_publisher:original,other_publishers:[],not_clear:[],publisher_excerpt:''}:
+    mode==='More context'?{mode,summary:c.what_happened,summary_label:c.what_happened_label,why_matter:c.why_matter,not_clear:c.not_clear||[],publisher_excerpt:c.publisher_excerpt,publisher_excerpt_attribution:c.publisher_excerpt_attribution,original_publisher:original,other_publishers:others}:
+    {mode:'Standard',summary:c.what_happened,summary_label:c.what_happened_label,why_matter:c.why_matter,not_clear:[],publisher_excerpt:'',original_publisher:original,other_publishers:[]};
+  return story;
+}
+function applyBrowserState(payload) {
+  if(!stateless||!payload)return payload;
+  const state=browserState(),records=state.stories;
+  const decorate=story=>{const saved=records[story.id];return saved?{...story,read:!!saved.read,saved:!!saved.saved,hidden:!!saved.hidden,feedback:saved.feedback||null,note:saved.note||null,read_date:saved.read_date||null}:story;};
+  payload.stories=(payload.stories||[]).map(decorate).map(story=>applyReaderMode(story,state.difficulty)).filter(story=>!story.hidden);
+  payload.unverifiedStories=(payload.unverifiedStories||[]).map(decorate).map(story=>applyReaderMode(story,state.difficulty)).filter(story=>!story.hidden);
+  payload.hiddenStories=Object.values(records).filter(story=>story.hidden).map(story=>story.snapshot||story).filter(story=>safeArticleUrl(story.url));
+  const saved=Object.values(records).filter(story=>story.saved||story.note).map(story=>story.snapshot||story).filter(story=>safeArticleUrl(story.url)).map(decorate).map(story=>applyReaderMode(story,state.difficulty)).sort((a,b)=>String(b.published||'').localeCompare(String(a.published||'')));
+  const today=localDateKey(),readToday=Object.values(records).filter(story=>story.read&&story.read_date===today).length;
+  payload.reading={...(payload.reading||{}),goal:state.goal,read_today:readToday,
+    deep_read_completed:state.history.some(item=>item.date===today&&item.deep),saved,
+    history:state.history.filter(item=>item.date>=localDateKey(new Date(Date.now()-6*86400000))&&safeArticleUrl(item.url)).sort((a,b)=>b.date.localeCompare(a.date))};
+  payload.settings={...(payload.settings||{}),difficulty:state.difficulty,daily_goal:state.goal};
+  if(payload.deepRead){payload.deepRead=applyReaderMode(decorate(payload.deepRead),state.difficulty);payload.deepReadCompleted=payload.reading.deep_read_completed;}
+  payload.hiddenStories=payload.hiddenStories.map(story=>applyReaderMode(story,state.difficulty));
+  return payload;
+}
+
 async function ensureSession() {
   if(sessionChecked)return;
   const res=await fetch('/api/session',{credentials:'same-origin',headers:{'Accept':'application/json'}});
@@ -30,7 +80,7 @@ async function ensureSession() {
   if(!res.ok)throw new Error(`Session check failed (${res.status})`);
   const session=await res.json();csrfToken=session.csrf||null;privateSession=session.private===true;stateless=session.stateless===true;sessionChecked=true;
   $('#sign-out').hidden=!privateSession;
-  if(stateless){$('#settings-open').hidden=true;$('#sign-out').hidden=true;$('.reading-lower').hidden=true;$('#hidden-toggle').hidden=true;$('.progress-track').hidden=true;$('#reading-progress-label').hidden=true;$('#stateless-note').hidden=false;}
+  if(stateless){$('#sign-out').hidden=true;$('#stateless-note').hidden=false;$('#stateless-note').textContent='Your reading list, notes, and progress save only in this browser. Feed refresh sends no reading activity or preferences.';$$('#settings-form fieldset').forEach(el=>el.hidden=true);$('#length').closest('label').hidden=true;$('#freshness-hours').closest('label').hidden=true;$('#settings-description').textContent='Your reading goal and display mode are stored only in this browser. No account or cloud database is used.';}
 }
 async function request(path, body) {
   if(body)await ensureSession();
@@ -63,7 +113,7 @@ function articleCard(s, unverified=false) {
   const breakdown=signals.length?signals.map(x=>`<li><span>${esc(x.label)}</span><b>${x.score>0?'+':''}${Number(x.score).toFixed(2)}</b></li>`).join(''):'<li>No non-zero ranking signals applied.</li>';
   const reason=`<div class="why-here"><b>Why this is here</b><span>${explanations.map(esc).join(' · ')}</span></div><details class="score-details"><summary>Score breakdown</summary><p>These are rule-based score contributions, not a measure of truth or certainty.</p><ul>${breakdown}</ul></details>`;
   const feedback=stateless?'':`<div class="feedback-actions" role="group" aria-label="Local relevance feedback for ${esc(s.title)}"><button class="small-action" data-action="feedback-more" aria-pressed="${s.feedback==='more'}" aria-label="${s.feedback==='more'?'Remove More like this preference':'More like this'} for ${esc(s.title)}">${s.feedback==='more'?'✓ More like this':'More like this'}</button><button class="small-action" data-action="feedback-less" aria-pressed="${s.feedback==='less'}" aria-label="${s.feedback==='less'?'Remove Less like this preference':'Less like this'} for ${esc(s.title)}">${s.feedback==='less'?'✓ Less like this':'Less like this'}</button>${s.feedback?'<button class="small-action" data-action="feedback-clear">Undo preference</button>':''}</div><p class="feedback-help">These choices stay on this device. They adjust this story and give a small boost or reduction to matching topics and regions. Undo clears this story’s feedback.</p>`;
-  const actions=stateless?'':`<div class="actions" role="group" aria-label="Story actions for ${esc(s.title)}"><button class="small-action ${s.saved?'on':''}" data-action="saved" aria-label="${s.saved?'Remove saved status from':'Save'} ${esc(s.title)}">${s.saved?'★ Saved':'☆ Save'}</button><button class="small-action" data-action="read" aria-label="Mark ${esc(s.title)} ${s.read?'unread':'read'}">${s.read?'✓ Read':'○ Read'}</button><button class="small-action" data-action="hidden" aria-label="Hide ${esc(s.title)}">× Hide</button></div>`;
+  const actions=`<div class="actions" role="group" aria-label="Story actions for ${esc(s.title)}"><button class="small-action ${s.saved?'on':''}" data-action="saved" aria-label="${s.saved?'Remove saved status from':'Save'} ${esc(s.title)}">${s.saved?'★ Saved':'☆ Save'}</button><button class="small-action" data-action="read" aria-label="Mark ${esc(s.title)} ${s.read?'unread':'read'}">${s.read?'✓ Read':'○ Read'}</button><button class="small-action" data-action="hidden" aria-label="Hide ${esc(s.title)}">× Hide</button></div>`;
   return `<article class="story" data-story="${esc(s.id)}"><div class="story-top"><span class="category">${esc(s.category)} · ${esc(s.region)}${status?` · <span class="date-status">${esc(status)}</span>`:''}</span>${actions}</div><h3>${esc(s.title)}</h3>${mode==='Quick scan'?'':reason}${feedback}${context}${note}<div class="story-foot">${publicationMeta(s)}</div></article>`;
 }
 
@@ -96,11 +146,15 @@ function renderReading() {
   $('#reading-progress-bar').style.width=`${pct}%`;
   const progress=$('.progress-track');progress.setAttribute('aria-valuemax',String(goal));progress.setAttribute('aria-valuenow',String(Math.min(completed,goal)));
   const deep=data.deepRead;
-  $('#deep-wrap').innerHTML=deep?`<article class="today-card"><div class="deep-label">✳ &nbsp;${esc(data.focus.toUpperCase())} · ${esc(ageLabel(deep.published))}</div><h3>${esc(deep.title)}</h3>${storyContextMarkup(deep)}<div class="today-meta">${publicationMeta(deep)}${deep.reading_minutes?`<span>${esc(deep.reading_minutes)} min read</span>`:''}</div><div class="today-actions"><a class="button-primary" href="${esc(deep.url)}" target="_blank" rel="noopener noreferrer">Read at publisher ↗</a>${!stateless?(reading.deep_read_completed?'<span class="completed-label">✓ Deep read completed today</span>':'<button class="text-button" id="complete-deep">Mark deep read complete</button>'):''}</div></article>`:'<div class="empty reading-empty"><strong>No suitable recent deep read</strong><p>No dated, recent article matched today’s “'+esc(data.focus)+'” theme. Refresh feeds or check back later; the app will not substitute an unrelated or stale story.</p></div>';
+  $('#deep-wrap').innerHTML=deep?`<article class="today-card"><div class="deep-label">✳ &nbsp;${esc(data.focus.toUpperCase())} · ${esc(ageLabel(deep.published))}</div><h3>${esc(deep.title)}</h3>${storyContextMarkup(deep)}<div class="today-meta">${publicationMeta(deep)}${deep.reading_minutes?`<span>${esc(deep.reading_minutes)} min read</span>`:''}</div><div class="today-actions"><a class="button-primary" href="${esc(deep.url)}" target="_blank" rel="noopener noreferrer">Read at publisher ↗</a>${reading.deep_read_completed?'<span class="completed-label">✓ Deep read completed today</span>':'<button class="text-button" id="complete-deep">Mark deep read complete</button>'}</div></article>`:'<div class="empty reading-empty"><strong>No suitable recent deep read</strong><p>No dated, recent article matched today’s “'+esc(data.focus)+'” theme. Refresh feeds or check back later; the app will not substitute an unrelated or stale story.</p></div>';
   const saved=reading.saved||[],savedCount=saved.filter(item=>item.saved).length;$('#saved-count').textContent=savedCount?`${savedCount} saved`:'';
   $('#reading-list').innerHTML=saved.length?saved.map(readingListCard).join(''):'<div class="empty compact-empty"><strong>Your list is clear</strong><p>Save a story from the briefing and it will be here for later.</p></div>';
   const history=reading.history||[];
   $('#reading-history').innerHTML=history.length?`<ol class="history-list">${history.map(item=>`<li><time datetime="${esc(item.date)}">${esc(dateFormat(`${item.date}T12:00:00`,{weekday:'short',month:'short',day:'numeric'}))}</time><span>${esc(item.theme)}</span><a href="${esc(item.url)}" target="_blank" rel="noopener noreferrer">${esc(item.title)}</a></li>`).join('')}</ol>`:'<div class="empty compact-empty"><strong>No completed deep reads this week</strong><p>Finish a featured article to start your weekly history.</p></div>';
+  const readDates=new Set([...history.map(item=>item.date),...Object.values(browserState().stories).filter(item=>item.read&&item.read_date).map(item=>item.read_date)]);
+  let streak=0, cursor=new Date();if(!readDates.has(localDateKey(cursor))){cursor.setDate(cursor.getDate()-1);if(!readDates.has(localDateKey(cursor)))cursor=null;}
+  while(cursor&&readDates.has(localDateKey(cursor))){streak++;cursor.setDate(cursor.getDate()-1);}
+  $('#reading-streak').textContent=`${streak} day${streak===1?'':'s'} in a row`;
 }
 function render() {
   if (!data) return;
@@ -152,7 +206,7 @@ function drawCoverage() {
 }
 async function load() {
   $('#status').textContent='Loading your briefing…';
-  try { await ensureSession();[data,config] = await Promise.all([request('/api/briefing'),request('/api/config')]); render(); }
+  try { await ensureSession();[data,config] = await Promise.all([request('/api/briefing'),request('/api/config')]);if(stateless){$('#status').textContent='Checking your sources and collecting fresh headlines…';await refreshFeeds(true);}else render(); }
   catch(e) { $('#status').textContent=`Could not load your briefing: ${e.message}`; }
 }
 function options(container, values, selected, name, labels={}) {
@@ -171,6 +225,7 @@ function openSettings() {
 $('#settings-open').addEventListener('click',()=>{if(data&&config)openSettings();});
 $('#sign-out').addEventListener('click',async()=>{try{await request('/api/logout',{});window.location.assign('/');}catch(e){$('#status').textContent=`Could not sign out: ${e.message}`;}});
 $('#save-settings').addEventListener('click',async()=>{
+  if(stateless){const state=browserState();state.goal=Number($('#daily-goal').value)||1;state.difficulty=$('#difficulty').value;writeBrowserState(state);applyBrowserState(data);render();$('#save-note').textContent='Saved in this browser';$('#settings-dialog').close();return;}
   const val=name=>$$(`input[name="${name}"]:checked`).map(el=>el.value);
   try { await request('/api/settings',{regions:val('regions'),topics:val('topics'),sources:val('sources'),excluded:val('excluded'),length:Number($('#length').value),freshness_hours:Number($('#freshness-hours').value),difficulty:$('#difficulty').value,daily_goal:Number($('#daily-goal').value)}); $('#save-note').textContent='Saved'; $('#settings-dialog').close(); await load(); }
   catch(e){$('#save-note').textContent=`Could not save: ${e.message}`;}
@@ -187,6 +242,7 @@ async function handleStoryAction(e) {
   else if(field==='feedback-clear') { change={feedback:'clear'}; }
   else change={[field]:field==='read'?!story.read:field==='saved'?!story.saved:true};
   if(field==='hidden'&&change.hidden)hiddenOpen=true;
+  if(stateless){if(field==='read')change.read_date=change.read?localDateKey():null;saveBrowserStory(story,change);$('#status').textContent=field==='hidden'?'Story hidden. Review it in Hidden stories.':field==='saved'?(change.saved?'Saved to your reading list on this browser.':'Removed from your reading list.'):field==='read'?(change.read?'Marked read.':'Marked unread.'):'';return;}
   try{
     await request(`/api/story/${story.id}`,change);await load();
     const message=field==='hidden'?'Story hidden. Review it in Hidden stories.':field==='saved'?(change.saved?'Story saved to your reading list.':'Story removed from your reading list.'):field==='read'?(change.read?'Story marked read.':'Story marked unread.'):field==='feedback-clear'?'Local relevance preference cleared.':field.startsWith('feedback-')?(change.feedback==='clear'?'Local relevance preference cleared.':'Local relevance preference updated for this story and similar topics and regions.'):'';
@@ -196,6 +252,7 @@ async function handleStoryAction(e) {
 $('#story-list').addEventListener('click',handleStoryAction);
 $('#undated-list').addEventListener('click',handleStoryAction);
 async function saveNote(id,note){
+  if(stateless){const story=[...(data.stories||[]),...(data.unverifiedStories||[]),...(data.reading?.saved||[]),...(data.hiddenStories||[])].find(item=>item.id===id);if(!story)return;if(!story.read){$('#status').textContent='Mark this story read before adding a note.';return;}saveBrowserStory(story,{note:String(note).slice(0,280)});$('#status').textContent='Personal note saved in this browser.';return;}
   try{await request(`/api/story/${id}`,{note});await load();$('#status').textContent='Personal note saved on this device.';}
   catch(err){$('#status').textContent=`Could not save note: ${err.message}`;}
 }
@@ -205,6 +262,7 @@ $('#reading-list').addEventListener('click',async e=>{
   const button=e.target.closest('[data-reading-action]');if(!button)return;
   const id=button.dataset.id,field=button.dataset.readingAction;
   const story=(data.reading.saved||[]).find(item=>item.id===id);if(!story)return;
+  if(stateless){const change=field==='read'?{read:!story.read,read_date:!story.read?localDateKey():null}:{saved:!story.saved};saveBrowserStory(story,change);$('#status').textContent=field==='read'?(change.read?'Marked read.':'Marked unread.'):(change.saved?'Saved for later.':'Removed from your reading list.');return;}
   try{await request(`/api/story/${id}`,{[field]:field==='read'?!story.read:!story.saved});await load();$('#status').textContent=field==='read'?(story.read?'Story marked unread.':'Story marked read.'):(story.saved?'Story removed from your reading list.':'Story saved to your reading list.');}
   catch(err){$('#status').textContent=`Could not update reading list: ${err.message}`;}
 });
@@ -213,19 +271,21 @@ $('#hidden-list').addEventListener('click',async e=>{
   const button=e.target.closest('[data-hidden-restore]');if(!button)return;
   const storyId=button.dataset.hiddenRestore;
   button.disabled=true;
+  if(stateless){const story=(data.hiddenStories||[]).find(item=>item.id===storyId);if(story){saveBrowserStory(story,{hidden:false});$('#status').textContent='Story restored. It appears again only if it still qualifies in the current feed.';}return;}
   try{await request(`/api/story/${storyId}`,{hidden:false});await load();$('#status').textContent=data.stories.some(story=>story.id===storyId)?'Story restored to the briefing.':'Story unhidden. It does not currently meet the briefing’s freshness and relevance rules.';}
   catch(err){button.disabled=false;$('#status').textContent=`Could not restore story: ${err.message}`;}
 });
 $('#deep-wrap').addEventListener('click',async e=>{
   if(e.target.id!=='complete-deep')return;
   e.target.disabled=true;
+  if(stateless){const story=data.deepRead;if(story){const state=browserState(),date=localDateKey();saveBrowserStory(story,{read:true,read_date:date});if(!state.history.some(item=>item.id===story.id&&item.date===date))state.history.push({id:story.id,date,theme:data.focus,title:story.title,url:story.url,deep:true});writeBrowserState(state);applyBrowserState(data);render();$('#status').textContent='Today’s deep read added to your browser-only reading history.';}return;}
   try{await request('/api/reading/complete',{story_id:data.deepRead.id});await load();}
   catch(err){$('#status').textContent=`Could not save reading progress: ${err.message}`;e.target.disabled=false;}
 });
-async function refreshFeeds() {
+async function refreshFeeds(initial=false) {
   const btn=$('#refresh');btn.disabled=true;btn.innerHTML='↻ <span>Checking feeds…</span>';$('#status').textContent='Fetching current stories from your enabled RSS sources…';
-  try{const result=await request('/api/refresh',{});if(stateless){data=result;render();}else await load();$('#status').textContent=(result.refresh?.checked??result.checked)===0?'No verified sources are configured.':`Feed check complete · ${result.refresh?.new??result.new} stories · ${result.refresh?.grouped??result.grouped} grouped reports · ${result.refresh?.failed??result.failed} source${(result.refresh?.failed??result.failed)===1?'':'s'} failed. See source status for details.`;}
-  catch(e){$('#status').textContent=`Could not refresh feeds: ${e.message}`;}
+  try{const result=await request('/api/refresh',{});if(stateless){data=applyBrowserState(result);render();}else await load();$('#status').textContent=(result.refresh?.checked??result.checked)===0?'No verified sources are configured.':`Feed check complete · ${result.refresh?.new??result.new} stories · ${result.refresh?.grouped??result.grouped} grouped reports · ${result.refresh?.failed??result.failed} source${(result.refresh?.failed??result.failed)===1?'':'s'} failed. See source status for details.`;}
+  catch(e){if(stateless&&data){data=applyBrowserState(data);render();}$('#status').textContent=`Could not refresh feeds: ${e.message}. Try again or check the configured source feeds.`;}
   btn.disabled=false;btn.innerHTML='↻ <span>Refresh feeds</span>';
 }
 $('#refresh').addEventListener('click',refreshFeeds);

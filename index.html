@@ -11,7 +11,7 @@
   <section class="welcome"><div><p class="eyebrow" id="today">YOUR MORNING, IN CONTEXT</p><h1>A clearer view<br>of <span>what matters.</span></h1><p class="intro">A considered briefing for a curious mind. Global in scope, with India in the frame.</p></div><div class="datebox"><span class="sun" aria-hidden="true">◒</span><span>THE WORLD, IN BRIEF</span><strong id="date-label"></strong><small id="story-count" aria-live="polite">Checking your briefing…</small></div></section>
   <section class="focusbar"><span class="focus-icon">✳</span><div><small>TODAY’S DEEP READ</small><strong id="focus-title">One focused read, picked for today</strong></div><span class="focus-day" id="focus-day"></span></section>
   <section class="reading-panel" aria-labelledby="today-reading-title">
-    <div class="reading-section-head"><div><p class="eyebrow">A SMALL DAILY PRACTICE</p><h2 id="today-reading-title">Today’s reading</h2></div><div class="goal-count" id="reading-progress-label">0 of 1 articles</div></div>
+    <div class="reading-section-head"><div><p class="eyebrow">A SMALL DAILY PRACTICE</p><h2 id="today-reading-title">Today’s reading</h2></div><div class="reading-goal-wrap"><span class="goal-count" id="reading-streak">0 days in a row</span><span class="goal-count" id="reading-progress-label">0 of 1 articles</span></div></div>
     <div class="progress-track" role="progressbar" aria-label="Daily reading goal" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0"><span id="reading-progress-bar"></span></div>
     <div id="deep-wrap"></div>
   </section>
@@ -30,7 +30,7 @@
   <section id="hidden-section" class="hidden-section hidden" aria-labelledby="hidden-title"><div class="hidden-head"><div><p class="eyebrow">SEPARATE FROM YOUR READ STATUS</p><h2 id="hidden-title">Hidden stories</h2><p>Hiding removes a story from the briefing. It does not mark the story read.</p></div></div><div id="hidden-list" class="story-list"></div></section>
   <section class="coverage-panel" aria-labelledby="coverage-title"><div><p class="eyebrow">FROM TODAY'S SUCCESSFUL FEED CHECKS</p><h2 id="coverage-title">Coverage in this briefing</h2></div><div id="coverage-indicator" role="status" aria-live="polite"></div></section>
   <div class="filters" id="filters" role="group" aria-label="Filter stories"></div>
-  <p id="stateless-note" class="status" hidden>This public Vercel reader does not save data. Stories appear for this page view and clear when you reload.</p>
+  <p id="stateless-note" class="status" hidden>Reading list and progress save only in this browser. Nothing is sent to a hosted database.</p>
   <div id="status" class="status" role="status"></div><div id="story-list" class="story-list"></div>
   <section id="undated-wrap" class="undated-wrap hidden" aria-labelledby="undated-title"><h2 id="undated-title">Date unverified</h2><p>These relevant feed items have no reliable publication timestamp, so they are kept separate and never outrank dated recent stories.</p><div id="undated-list" class="story-list"></div></section>
   <section class="source-note"><div class="source-note-icon" aria-hidden="true">◎</div><div><strong>News with its sources in view.</strong><p>Stories link to their publishers. Related coverage is grouped where headlines overlap. A cluster’s sources appear on the card.</p></div><button id="sources-toggle" class="text-button" aria-controls="source-panel" aria-expanded="false">View source status ↗</button></section>

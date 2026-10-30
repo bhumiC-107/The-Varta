@@ -2,10 +2,31 @@
 
 Morning Signal is a concise RSS-based morning briefing. It groups related reports, prioritizes fresh and relevant stories, includes an India perspective, and links to publishers. It does not fetch article pages or use AI services.
 
-Try the prototype here : https://the-varta-ekjozvpb3-bhumic-107s-projects.vercel.app/
+Prototype: https://the-varta-ekjozvpb3-bhumic-107s-projects.vercel.app/
+
+## Run locally
+
+Requires Python 3.10+. The app uses only the Python standard library.
+
+```powershell
+python server.py
+```
+
+Open <http://127.0.0.1:8765> and choose **Refresh feeds**. Stop with Ctrl+C. Local mode keeps story metadata, permitted feed excerpts, preferences, and reading activity in `morning_signal.sqlite3` using SQLite. To use a separate development database, set `MORNING_SIGNAL_SQLITE_PATH` to another filename first. The existing database and backups are excluded from Git and Vercel deployment.
+
+## Deploy to Vercel without a database
+
+The Vercel version is a public reader with no server-side database or sign-in. It needs no Neon/MySQL/Postgres account, database URL, password, session secret, or environment variable. On first open it automatically checks the enabled verified RSS feeds; **Refresh feeds** can check them again. The serverless request does not open SQLite or retain feed results. Read/save/hide actions, notes, the daily goal, reading history, and display mode are stored in this browser's `localStorage`, on this device only. They are not sent with feed requests. Clearing browser site data or using another browser/device clears or will not show that local reading state. Local mode remains available with SQLite.
+
+1. Import the repository into Vercel with the repository root as the project root.
+2. Keep the included `vercel.json`; no database or environment configuration is needed.
+3. Deploy. Open the assigned HTTPS URL and use **Refresh feeds**.
+
+The actual account limits, Python runtime packaging, and live feed reachability from Vercel are not verified by the fixture suite. A refresh is bounded by the Vercel function duration and may return partial results if feeds fail or the function budget is reached. There is no scheduled/background refresh or server cache. The public URL has no access control: anyone with it can view and refresh the configured feeds. Do not add personal or secret feeds to `sources.json`.
+
 ### Local privacy and existing data
 
-Vercel does not read, upload, migrate, modify, or delete `morning_signal.sqlite3` or its backups. Keep local files backed up as usual. Local SQLite behavior and data remain available by running `python server.py`; the Vercel version is intentionally read-only/stateless. Neither version sends notes or reading activity to external services. Refreshing contacts configured publishers, and opening a publisher article sends the browser to that publisher.
+Vercel does not read, upload, migrate, modify, or delete `morning_signal.sqlite3` or its backups. Keep local files backed up as usual. Local SQLite behavior and data remain available by running `python server.py`. In Vercel, reading state is persisted only by the browser's local storage; no notes, saved/read actions, or history are sent to the application server or publishers. Refreshing contacts configured feed publishers, and opening an article sends the browser to that publisher.
 
 ## Sources and feed limits
 
@@ -34,7 +55,7 @@ Feed requests have a timeout, 1 MB response cap, 35 item limit, XML entity decla
 - Default exclusions cover celebrity, influencer, entertainment gossip, and K-pop terms, with a narrow configured civic/humanitarian exception. Keyword rules can miss context and are not human editorial review.
 - Story context uses only feed titles, excerpts, and source metadata. It is a labeled feed-based paraphrase; short or missing excerpts produce an insufficiency note. “Why it may matter” is a cautious category template and cannot establish real-world consequences. Publisher links remain the authority for the full report.
 
-The Vercel version uses fixed default ranking preferences, because personalized settings are not sent to a server or stored remotely. Local mode retains its configurable preferences and reading features in SQLite. The stateless Vercel page does not save stories or settings across a reload.
+Vercel ranking uses fixed defaults; local personalization settings are not sent to the server. The Vercel page automatically fetches stories on first open and keeps an optional reading list, read status, hidden list, personal notes, daily goal, streak, and weekly deep-read history in browser local storage. These browser-only settings persist across reloads in the same browser profile. They are not synced or backed up by the app.
 
 ## Project files
 
@@ -61,7 +82,7 @@ Tests use mocked feeds, fixtures, and temporary SQLite databases. They do not es
 
 ## Known limitations
 
-- Public Vercel mode has no sign-in and is viewable by anyone with the URL. It does not retain feed results, preferences, or user actions. This suits a personal read-only session but is not a shared private publication system.
+- Public Vercel mode has no sign-in and is viewable by anyone with the URL. Preferences and reading state stay in browser local storage, so they are not private from other users of the same browser profile, synced across devices, or recoverable if site data is cleared.
 - RSS feeds are incomplete, can fail, and vary in how much context or reliable publication dating they provide. Regional labels, impact cues, and event clustering are heuristics; they can misclassify or miss stories.
 - A few publishers have personal-use or non-collective use limits. Review their current terms before exposing feed excerpts on a public domain; disable feeds if public display is not permitted.
 - The Vercel route is implemented but has not been deployed or verified against a live Vercel account. No claim is made that the Vercel runtime can reach every feed.
